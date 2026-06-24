@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dashboard CLI — Mover Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #0d0f14;
+    --bg2:     #13161e;
+    --border:  #252a38;
+    --text:    #c8ccd8;
+    --dim:     #5a6080;
+    --bright:  #e8eaf0;
+    --green:   #1dbd8a;
+    --purple:  #7c6ff7;
+    --amber:   #e8a44a;
+    --red:     #c0392b;
+    --cyan:    #4ec9b0;
+    --code-bg: #0a0c10;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.7;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 32px;
+    margin-bottom: 48px;
+  }
+  .header-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-size: 32px;
+    font-weight: 300;
+    color: var(--bright);
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  h1 code {
+    color: var(--green);
+    font-family: var(--mono);
+    font-weight: 600;
+  }
+  .header-sub {
+    color: var(--dim);
+    font-size: 14px;
+    max-width: 560px;
+  }
+
+  /* ── SECTIONS ── */
+  section { margin-bottom: 52px; }
+  h2 {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  h2::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── COMMAND REFERENCE TABLE ── */
+  .cmd-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .cmd-row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 16px;
+    padding: 10px 14px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    align-items: start;
+  }
+  .cmd-row:first-child { border-radius: 6px 6px 2px 2px; }
+  .cmd-row:last-child  { border-radius: 2px 2px 6px 6px; }
+  .cmd-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--green);
+    font-weight: 600;
+  }
+  .cmd-desc {
+    font-size: 13px;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .cmd-desc code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* ── CODE BLOCKS ── */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin: 0;
+    color: #6878a0;
+  }
+  .t-cmd     { color: #c8ccd8; }
+  .t-comment { color: #2e3450; }
+  .t-green   { color: var(--green); }
+  .t-amber   { color: var(--amber); }
+  .t-purple  { color: var(--purple); }
+  .t-cyan    { color: var(--cyan); }
+  .t-dim     { color: #3d4460; }
+
+  /* ── CHAIN OF EVENTS ── */
+  .chain {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .chain-step {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 0 16px;
+  }
+  .chain-left {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .chain-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid var(--green);
+    background: var(--bg);
+    flex-shrink: 0;
+    margin-top: 5px;
+    position: relative;
+    z-index: 1;
+  }
+  .chain-dot.purple { border-color: var(--purple); }
+  .chain-dot.amber  { border-color: var(--amber); }
+  .chain-dot.dim    { border-color: var(--dim); }
+  .chain-line {
+    flex: 1;
+    width: 1px;
+    background: var(--border);
+    margin: 3px 0;
+    min-height: 16px;
+  }
+  .chain-step:last-child .chain-line { display: none; }
+  .chain-content { padding-bottom: 20px; }
+  .chain-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--bright);
+    line-height: 1.4;
+    margin-bottom: 2px;
+  }
+  .chain-body {
+    font-size: 12px;
+    color: var(--dim);
+    line-height: 1.6;
+  }
+  .chain-body code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--cyan);
+  }
+  .chain-writes {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .write-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+  }
+  .wt-yml    { background: rgba(29,189,138,0.1);  color: var(--green); }
+  .wt-db     { background: rgba(124,111,247,0.1); color: var(--purple); }
+  .wt-log    { background: rgba(78,201,176,0.1);  color: var(--cyan); }
+  .wt-mf     { background: rgba(232,164,74,0.1);  color: var(--amber); }
+
+  /* ── NOTE ── */
+  .note {
+    background: rgba(200,204,216,0.04);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: 0 6px 6px 0;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--dim);
+    line-height: 1.6;
+    margin-top: 16px;
+  }
+  .note strong { color: var(--text); }
+  .note code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--amber);
+  }
+
+  /* ── INFO BOX ── */
+  .info {
+    background: rgba(29,189,138,0.06);
+    border: 1px solid rgba(29,189,138,0.2);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--dim);
+    line-height: 1.6;
+    margin-top: 16px;
+  }
+  .info strong { color: var(--green); }
+  .info code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--green);
+  }
+
+  /* ── DEMO BLOCKS ── */
+  .demo-block {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .demo-header {
+    background: var(--bg2);
+    padding: 8px 16px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .demo-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+  }
+  .dd-green  { background: var(--green); }
+  .dd-purple { background: var(--purple); }
+  .dd-amber  { background: var(--amber); }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <p class="header-label">Shaheen3 HPC · KAUST · k03 · Mover CLI</p>
+  <h1>The <code>dashboard</code> CLI</h1>
+  <p class="header-sub">A terminal interface for data movers. Confirm moves, update fields, and manage artifact status — all from the command line. Changes appear in the UI on next refresh.</p>
+</div>
+
+<!-- SETUP -->
+<section>
+  <h2>setup</h2>
+  <pre><span class="t-comment"># add to ~/.bashrc so dashboard is available from anywhere</span>
+<span class="t-cmd">echo 'export PATH="/scratch/project/k03/support_team/Metadata_Dashboard/cli:$PATH"' >> ~/.bashrc</span>
+<span class="t-cmd">source ~/.bashrc</span>
+
+<span class="t-comment"># verify</span>
+<span class="t-cmd">dashboard --help</span></pre>
+</section>
+
+<!-- COMMAND REFERENCE -->
+<section>
+  <h2>commands</h2>
+  <div class="cmd-grid">
+    <div class="cmd-row">
+      <div class="cmd-name">dashboard list</div>
+      <div class="cmd-desc">List artifacts. Filter by <code>--status</code>, <code>--aimcr</code>, <code>--type</code>. Add <code>--json</code> for machine-readable output.</div>
+    </div>
+    <div class="cmd-row">
+      <div class="cmd-name">dashboard inspect</div>
+      <div class="cmd-desc">Show full detail for one artifact — paths, checksums, curation notes, modification log.</div>
+    </div>
+    <div class="cmd-row">
+      <div class="cmd-name">dashboard move</div>
+      <div class="cmd-desc">Confirm the move to gpup. Sets <code>status=moved</code>, <code>partition=gpu</code>, records timestamp and username.</div>
+    </div>
+    <div class="cmd-row">
+      <div class="cmd-name">dashboard block</div>
+      <div class="cmd-desc">Block an artifact with a required reason. Curator sees the reason in the dashboard.</div>
+    </div>
+    <div class="cmd-row">
+      <div class="cmd-name">dashboard reinstate</div>
+      <div class="cmd-desc">Reinstate a blocked or rejected artifact back to <code>staged</code>.</div>
+    </div>
+    <div class="cmd-row">
+      <div class="cmd-name">dashboard edit</div>
+      <div class="cmd-desc">Edit mover-owned fields: <code>moving_notes</code>, <code>checksum_verified_gpup</code>, <code>destination_path</code>, <code>project_id</code>.</div>
+    </div>
+  </div>
+</section>
+
+<!-- CHAIN OF EVENTS -->
+<section>
+  <h2>chain of events — what happens on each command</h2>
+  <div class="chain">
+
+    <div class="chain-step">
+      <div class="chain-left"><div class="chain-dot"></div><div class="chain-line"></div></div>
+      <div class="chain-content">
+        <div class="chain-title">dashboard list / inspect</div>
+        <div class="chain-body">Read-only. Queries the SQLite database — no files are touched.</div>
+      </div>
+    </div>
+
+    <div class="chain-step">
+      <div class="chain-left"><div class="chain-dot purple"></div><div class="chain-line"></div></div>
+      <div class="chain-content">
+        <div class="chain-title">dashboard move</div>
+        <div class="chain-body">Validates gpup checksum is filled, then runs the full move sequence.</div>
+        <div class="chain-writes">
+          <span class="write-tag wt-yml">YML updated on disk</span>
+          <span class="write-tag wt-db">DB row synced</span>
+          <span class="write-tag wt-log">modlog entry appended</span>
+          <span class="write-tag wt-mf">manifest synced</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chain-step">
+      <div class="chain-left"><div class="chain-dot amber"></div><div class="chain-line"></div></div>
+      <div class="chain-content">
+        <div class="chain-title">dashboard block / reinstate</div>
+        <div class="chain-body">Appends a reason entry to <code>moving_status_reason</code>, changes status, propagates reason to modlog.</div>
+        <div class="chain-writes">
+          <span class="write-tag wt-yml">YML updated on disk</span>
+          <span class="write-tag wt-db">DB row synced</span>
+          <span class="write-tag wt-log">modlog entry appended</span>
+          <span class="write-tag wt-mf">manifest synced</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chain-step">
+      <div class="chain-left"><div class="chain-dot"></div><div class="chain-line"></div></div>
+      <div class="chain-content">
+        <div class="chain-title">dashboard edit</div>
+        <div class="chain-body">Loads current YML, applies field changes, computes a diff, writes everything back.</div>
+        <div class="chain-writes">
+          <span class="write-tag wt-yml">YML updated on disk</span>
+          <span class="write-tag wt-db">DB row synced</span>
+          <span class="write-tag wt-log">diff logged (old → new)</span>
+          <span class="write-tag wt-mf">manifest synced</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chain-step">
+      <div class="chain-left"><div class="chain-dot dim"></div></div>
+      <div class="chain-content">
+        <div class="chain-title">UI reflects changes</div>
+        <div class="chain-body">The dashboard reads from the database. Any curator or browser who refreshes their page sees the updated status, fields, and modlog immediately.</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- DEMO -->
+<section>
+  <h2>demo — full mover workflow</h2>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-green"></div>step 1 — find what needs moving</div>
+    <pre><span class="t-cmd">dashboard list --status staged</span>
+
+<span class="t-dim">  ARTIFACT                                 TYPE       STATUS     AIMCR</span>
+<span class="t-dim">  ──────────────────────────────────────── ────────── ────────── ────────</span>
+  <span class="t-cmd">Seed-X-PPO-7B</span>                           <span class="t-dim">model</span>      <span class="t-green">STAGED</span>     <span class="t-dim">65616</span>
+  <span class="t-cmd">LLaVA-Video-178K</span>                        <span class="t-dim">dataset</span>    <span class="t-green">STAGED</span>     <span class="t-dim">65638</span></pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-green"></div>step 2 — inspect before moving</div>
+    <pre><span class="t-cmd">dashboard inspect 65616 Seed-X-PPO-7B</span>
+
+  <span class="t-cmd">Seed-X-PPO-7B</span>
+  <span class="t-green">STAGED</span>  <span class="t-dim">model</span>
+
+  <span class="t-dim">── curation ─────────────────────────────────────</span>
+  <span class="t-dim">source path             </span> /scratch/project/k03/support_team/65616/models/Seed-X-PPO-7B
+  <span class="t-dim">destination path        </span> /scratch/project/k#####
+  <span class="t-dim">size (GB)               </span> 14.0
+  <span class="t-dim">cpup verified           </span> True by x_mohameta</pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-amber"></div>step 3 — fill in destination and project id</div>
+    <pre><span class="t-comment"># curator left the destination as placeholder — fill it in</span>
+<span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B \</span>
+<span class="t-cmd">  destination_path="/scratch/project/k00123/models/Seed-X-PPO-7B" \</span>
+<span class="t-cmd">  project_id="k00123"</span>
+
+<span class="t-green">✓</span> Moving fields updated. Changes: destination_path: '/scratch/project/k#####' → '/scratch/project/k00123/models/Seed-X-PPO-7B'; project_id: 'k#####' → 'k00123'</pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-green"></div>step 4 — transfer the artifact outside the dashboard</div>
+    <pre><span class="t-comment"># run the actual file transfer — outside the dashboard</span>
+<span class="t-cmd">rsync -avP \</span>
+<span class="t-cmd">  /scratch/project/k03/support_team/65616/models/Seed-X-PPO-7B/ \</span>
+<span class="t-cmd">  /scratch/project/k00123/models/Seed-X-PPO-7B/</span>
+
+<span class="t-comment"># verify checksum at destination</span>
+<span class="t-cmd">cd /scratch/project/k00123/models/Seed-X-PPO-7B/</span>
+<span class="t-cmd">sha256sum -c checksum.sha256</span>
+<span class="t-dim"># all files must show: OK</span></pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-purple"></div>step 5 — confirm the move in the dashboard</div>
+    <pre><span class="t-cmd">dashboard move 65616 Seed-X-PPO-7B \</span>
+<span class="t-cmd">  --verified-by mover_username \</span>
+<span class="t-cmd">  --notes "transferred and verified on gpup"</span>
+
+<span class="t-green">✓</span> Artifact 'Seed-X-PPO-7B' moved successfully.
+  <span class="t-dim">verified by: mover_username</span>
+  <span class="t-dim">notes: transferred and verified on gpup</span>
+  <span class="t-dim">changes visible in the UI on next refresh</span></pre>
+  </div>
+
+  <div class="note">
+    <strong>UI sync</strong> — after <code>dashboard move</code>, any curator or browser who refreshes the dashboard will see <code>Seed-X-PPO-7B</code> with status <strong>MOVED</strong>, the gpup checksum verification, and a full modlog showing the complete history from staging to move.
+  </div>
+
+</section>
+
+<!-- EDITING DESTINATION AND PROJECT ID -->
+<section>
+  <h2>adjusting destination path and project id</h2>
+
+  <p style="color:var(--dim);font-size:13px;margin-bottom:16px;line-height:1.6">
+    Curators sometimes stage an artifact before the exact destination is confirmed,
+    leaving <code style="font-family:var(--mono);font-size:11px;color:var(--amber)">k#####</code> as a placeholder.
+    Movers who know the correct project allocation fill these in before confirming the move.
+  </p>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-amber"></div>update destination path only</div>
+    <pre><span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B \</span>
+<span class="t-cmd">  destination_path="/scratch/project/k00123/models/Seed-X-PPO-7B"</span></pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-amber"></div>update project id only</div>
+    <pre><span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B project_id="k00123"</span></pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-amber"></div>update both at once</div>
+    <pre><span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B \</span>
+<span class="t-cmd">  destination_path="/scratch/project/k00123/models/Seed-X-PPO-7B" \</span>
+<span class="t-cmd">  project_id="k00123"</span></pre>
+  </div>
+
+  <div class="info">
+    <strong>Every edit is logged.</strong> The modification log records the old value, the new value, your username, and a timestamp. Curators and browsers can see the full change history in the dashboard under <code>Modification log</code>.
+  </div>
+
+  <div class="note">
+    <strong>Other editable fields via CLI:</strong> <code>moving_notes</code> and <code>checksum_verified_gpup</code>.
+    Everything else is owned by the curator and is read-only for movers.
+  </div>
+
+</section>
+
+<!-- HANDLING PROBLEMS -->
+<section>
+  <h2>handling problems</h2>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-amber"></div>block — quota exceeded, bad checksum, path unavailable</div>
+    <pre><span class="t-cmd">dashboard block 65616 Seed-X-PPO-7B "quota exceeded on gpup — waiting for allocation"</span>
+
+<span class="t-green">✓</span> Artifact blocked: quota exceeded on gpup — waiting for allocation
+  <span class="t-dim">curator will see this reason in the dashboard</span></pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-green"></div>reinstate — once the issue is resolved</div>
+    <pre><span class="t-cmd">dashboard reinstate 65616 Seed-X-PPO-7B "quota resolved, destination confirmed"</span>
+
+<span class="t-green">✓</span> Artifact reinstated to staged.
+  <span class="t-dim">clearing reason: quota resolved, destination confirmed</span>
+  <span class="t-dim">status is now: staged</span></pre>
+  </div>
+
+  <div class="demo-block">
+    <div class="demo-header"><div class="demo-dot dd-green"></div>correct a mistake after move confirmation</div>
+    <pre><span class="t-comment"># wrong notes were entered — fix them after the fact</span>
+<span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B moving_notes="verified sha256 on gpup 2026-06-21"</span>
+
+<span class="t-green">✓</span> Moving fields updated. Changes: moving_notes: '' → 'verified sha256 on gpup 2026-06-21'</pre>
+  </div>
+
+</section>
+
+<!-- QUICK REFERENCE -->
+<section>
+  <h2>quick reference</h2>
+  <pre><span class="t-comment"># list</span>
+<span class="t-cmd">dashboard list</span>
+<span class="t-cmd">dashboard list --status staged</span>
+<span class="t-cmd">dashboard list --aimcr 65616</span>
+<span class="t-cmd">dashboard list --json</span>
+
+<span class="t-comment"># inspect</span>
+<span class="t-cmd">dashboard inspect &lt;aimcr&gt; &lt;name&gt;</span>
+<span class="t-cmd">dashboard inspect 65616 Seed-X-PPO-7B</span>
+<span class="t-cmd">dashboard inspect 65616 Seed-X-PPO-7B --json</span>
+
+<span class="t-comment"># move</span>
+<span class="t-cmd">dashboard move &lt;aimcr&gt; &lt;name&gt; [--verified-by USER] [--notes TEXT]</span>
+<span class="t-cmd">dashboard move 65616 Seed-X-PPO-7B --verified-by mover1 --notes "ok"</span>
+
+<span class="t-comment"># block / reinstate</span>
+<span class="t-cmd">dashboard block &lt;aimcr&gt; &lt;name&gt; "&lt;reason&gt;"</span>
+<span class="t-cmd">dashboard reinstate &lt;aimcr&gt; &lt;name&gt; "&lt;reason&gt;"</span>
+
+<span class="t-comment"># edit mover fields</span>
+<span class="t-cmd">dashboard edit &lt;aimcr&gt; &lt;name&gt; field=value [field=value ...]</span>
+<span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B destination_path="/scratch/project/k00123/models/Seed-X-PPO-7B"</span>
+<span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B project_id="k00123"</span>
+<span class="t-cmd">dashboard edit 65616 Seed-X-PPO-7B moving_notes="re-verified after network drop"</span></pre>
+</section>
+
+<footer>
+  dashboard CLI · Metadata Dashboard · Shaheen3 HPC · KAUST · k03
+</footer>
+
+</body>
+</html>

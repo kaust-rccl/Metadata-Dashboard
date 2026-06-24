@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Metadata Dashboard — Process Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0d0f14;
+    --bg2:       #13161e;
+    --bg3:       #1a1e28;
+    --border:    #252a38;
+    --text:      #c8ccd8;
+    --text-dim:  #5a6080;
+    --text-bright: #e8eaf0;
+    --curator:   #1dbd8a;
+    --curator-dim: rgba(29,189,138,0.12);
+    --mover:     #7c6ff7;
+    --mover-dim: rgba(124,111,247,0.12);
+    --browser:   #e8a44a;
+    --browser-dim: rgba(232,164,74,0.12);
+    --step-line: #252a38;
+    --code-bg:   #0a0c10;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  /* ── HEADER ── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 48px 0 40px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  header::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 600px 200px at 50% 100%, rgba(29,189,138,0.06), transparent),
+      radial-gradient(ellipse 400px 150px at 20% 50%, rgba(124,111,247,0.04), transparent);
+    pointer-events: none;
+  }
+
+  .header-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  h1 {
+    font-size: clamp(28px, 4vw, 48px);
+    font-weight: 300;
+    color: var(--text-bright);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 16px;
+  }
+
+  h1 span {
+    color: var(--curator);
+    font-weight: 600;
+  }
+
+  .header-sub {
+    color: var(--text-dim);
+    font-size: 14px;
+    max-width: 520px;
+    margin: 0 auto 32px;
+  }
+
+  /* ── ROLE PILLS ── */
+  .role-pills {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 0;
+  }
+
+  .pill {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+
+  .pill-curator { background: var(--curator-dim); color: var(--curator); border: 1px solid rgba(29,189,138,0.3); }
+  .pill-mover   { background: var(--mover-dim);   color: var(--mover);   border: 1px solid rgba(124,111,247,0.3); }
+  .pill-browser { background: var(--browser-dim); color: var(--browser); border: 1px solid rgba(232,164,74,0.3); }
+
+  .pill:hover { transform: translateY(-1px); filter: brightness(1.2); }
+
+  /* ── LAYOUT ── */
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ── ROLE SECTIONS ── */
+  .role-section {
+    padding: 64px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .role-section:last-child { border-bottom: none; }
+
+  .role-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+
+  .role-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .badge-curator { background: var(--curator-dim); color: var(--curator); border: 1px solid rgba(29,189,138,0.25); }
+  .badge-mover   { background: var(--mover-dim);   color: var(--mover);   border: 1px solid rgba(124,111,247,0.25); }
+  .badge-browser { background: var(--browser-dim); color: var(--browser); border: 1px solid rgba(232,164,74,0.25); }
+
+  .role-title {
+    font-size: 24px;
+    font-weight: 300;
+    color: var(--text-bright);
+    letter-spacing: -0.01em;
+  }
+
+  .role-desc {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-left: auto;
+    max-width: 280px;
+    text-align: right;
+    line-height: 1.5;
+  }
+
+  /* ── PHASE DIVIDER ── */
+  .phase {
+    margin-bottom: 40px;
+  }
+
+  .phase-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .phase-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── STEPS ── */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .step {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 0 20px;
+    position: relative;
+  }
+
+  .step-num-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 2px;
+  }
+
+  .step-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    flex-shrink: 0;
+    z-index: 1;
+    position: relative;
+  }
+
+  .step-num-curator { background: var(--curator-dim); color: var(--curator); border: 1px solid rgba(29,189,138,0.4); }
+  .step-num-mover   { background: var(--mover-dim);   color: var(--mover);   border: 1px solid rgba(124,111,247,0.4); }
+  .step-num-browser { background: var(--browser-dim); color: var(--browser); border: 1px solid rgba(232,164,74,0.4); }
+
+  .step-line {
+    flex: 1;
+    width: 1px;
+    background: var(--border);
+    margin: 4px 0;
+    min-height: 20px;
+  }
+
+  .step:last-child .step-line { display: none; }
+
+  .step-content {
+    padding-bottom: 28px;
+  }
+
+  .step-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-bright);
+    margin-bottom: 6px;
+    line-height: 1.4;
+    padding-top: 4px;
+  }
+
+  .step-body {
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.65;
+    margin-bottom: 10px;
+  }
+
+  /* ── DASHBOARD CALLOUT ── */
+  .dashboard-callout {
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-top: 10px;
+    margin-bottom: 4px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .callout-curator { background: var(--curator-dim); border-left: 3px solid var(--curator); }
+  .callout-mover   { background: var(--mover-dim);   border-left: 3px solid var(--mover); }
+  .callout-browser { background: var(--browser-dim); border-left: 3px solid var(--browser); }
+
+  .callout-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .callout-text {
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .callout-text strong {
+    display: block;
+    font-size: 11px;
+    font-family: var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .callout-curator .callout-text strong { color: var(--curator); }
+  .callout-mover   .callout-text strong { color: var(--mover); }
+  .callout-browser .callout-text strong { color: var(--browser); }
+
+  /* ── CODE BLOCKS ── */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-x: auto;
+    margin-top: 10px;
+    color: #8899bb;
+  }
+
+  pre .cmd { color: #c8ccd8; }
+  pre .comment { color: #3d4460; }
+  pre .highlight { color: var(--curator); }
+
+  /* ── INFO TAGS ── */
+  .tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.06em;
+  }
+
+  .tag-system { background: rgba(200,204,216,0.08); color: var(--text-dim); }
+  .tag-warn   { background: rgba(232,164,74,0.1); color: var(--browser); }
+  .tag-ok     { background: rgba(29,189,138,0.1); color: var(--curator); }
+  .tag-db     { background: rgba(124,111,247,0.1); color: var(--mover); }
+
+  /* ── NOTE BLOCKS ── */
+  .note {
+    background: rgba(200,204,216,0.04);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 10px;
+    line-height: 1.6;
+  }
+
+  .note strong { color: var(--text); }
+
+  /* ── FLOW OVERVIEW ── */
+  .flow-overview {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 40px 0;
+    overflow-x: auto;
+    padding: 24px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .flow-node {
+    flex-shrink: 0;
+    text-align: center;
+    padding: 0 16px;
+  }
+
+  .flow-icon {
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
+
+  .flow-name {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .flow-arrow {
+    flex-shrink: 0;
+    color: var(--border);
+    font-size: 18px;
+    padding: 0 4px;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(13,15,20,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow-x: auto;
+  }
+
+  nav a {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-decoration: none;
+    color: var(--text-dim);
+    padding: 14px 16px;
+    transition: color 0.2s;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+  }
+
+  nav a:hover { color: var(--text); }
+  nav a.cur { color: var(--curator); border-bottom-color: var(--curator); }
+  nav a.mov { color: var(--mover);   border-bottom-color: var(--mover); }
+  nav a.bro { color: var(--browser); border-bottom-color: var(--browser); }
+
+  /* ── FOOTER ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 32px 24px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 600px) {
+    .role-header { flex-wrap: wrap; }
+    .role-desc { margin-left: 0; text-align: left; max-width: 100%; margin-top: 8px; }
+    .step { grid-template-columns: 36px 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <p class="header-label">Shaheen3 HPC · KAUST · k03</p>
+    <h1>Artifact Curation &<br><span>Movement</span> Guide</h1>
+    <p class="header-sub">How to use the Metadata Dashboard across the full lifecycle — from Ibex download to gpup destination.</p>
+    <div class="role-pills">
+      <a href="#curator" class="pill pill-curator">→ Curator</a>
+      <a href="#mover"   class="pill pill-mover">→ Mover</a>
+      <a href="#browser" class="pill pill-browser">→ Browser</a>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <a href="#overview">Overview</a>
+  <a href="#curator" class="cur">Curator</a>
+  <a href="#mover"   class="mov">Mover</a>
+  <a href="#browser" class="bro">Browser</a>
+</nav>
+
+<!-- OVERVIEW -->
+<section id="overview" class="role-section">
+  <div class="container">
+    <div class="phase-label">end-to-end flow</div>
+    <div class="flow-overview">
+      <div class="flow-node">
+        <div class="flow-icon">🌐</div>
+        <div class="flow-name">Source</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="flow-icon">🖥</div>
+        <div class="flow-name">Ibex</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="flow-icon">📦</div>
+        <div class="flow-name">sh3 cpup</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="flow-icon">📋</div>
+        <div class="flow-name">Dashboard</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="flow-icon">🚀</div>
+        <div class="flow-name">sh3 gpup</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="flow-icon">✅</div>
+        <div class="flow-name">Available</div>
+      </div>
+    </div>
+    <div class="note">
+      <strong>The dashboard sits between staging and movement.</strong> It does not move data — it tracks, validates, and creates an auditable metadata record of every artifact as it moves through the system. The actual file transfers happen outside the dashboard using standard HPC tools.
+    </div>
+  </div>
+</section>
+
+<!-- CURATOR -->
+<section id="curator" class="role-section">
+  <div class="container">
+    <div class="role-header">
+      <span class="role-badge badge-curator">Curator</span>
+      <h2 class="role-title">Support Team (KSL AI/ML Team)</h2>
+      <p class="role-desc">Downloads, verifies, and stages artifacts. Creates the metadata record. Opens RT tickets.</p>
+    </div>
+
+    <!-- Phase 1: Ibex -->
+    <div class="phase">
+      <div class="phase-label">phase 1 — ibex</div>
+      <div class="steps">
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">1</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Download the artifact on Ibex</div>
+            <div class="step-body">Log into Ibex and download the artifact from the source — a third-party provider, PI storage, or external URL. Keep the original directory structure intact.</div>
+            <pre><span class="comment"># on Ibex</span>
+<span class="cmd">ssh username@glogin.ibex.kaust.edu.sa</span>
+<span class="cmd">cd /ibex/your/staging/area</span>
+<span class="comment"># run your download script</span></pre>
+            <div class="tags">
+              <span class="tag tag-system">ibex</span>
+              <span class="tag tag-system">outside dashboard</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">2</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Verify the artifact contents</div>
+            <div class="step-body">Inspect the downloaded files — check the directory structure, file count, and that the contents match what was expected. Unpack archives if necessary.</div>
+            <div class="tags">
+              <span class="tag tag-system">ibex</span>
+              <span class="tag tag-system">outside dashboard</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">3</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Generate a checksum</div>
+            <div class="step-body">Create a SHA-256 checksum file for the artifact. This file travels with the artifact and is used to verify integrity at every transfer step.</div>
+            <pre><span class="comment"># inside the artifact directory</span>
+<span class="cmd">cd artifact_directory/</span>
+<span class="cmd">find ibex/ai/reference/CV/tinyimagenet/ -type f -print0 | sort -z | xargs -0 sha256sum > checksum.sha256</span>
+<span class="comment"># verify it was created correctly</span>
+<span class="cmd">sha256sum -c checksum.sha256</span></pre>
+            <div class="tags">
+              <span class="tag tag-system">ibex</span>
+              <span class="tag tag-ok">creates checksum.sha256</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">4</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Transfer artifact + checksum to Shaheen3 cpup</div>
+            <div class="step-body">Move the artifact directory and its checksum file together to the staging area on Shaheen3's CPU partition. The destination path follows the convention: <code>support_team/6####/datasets|models|software/artifact_name/</code></div>
+            <pre><span class="comment"># from Ibex — transfer to sh3 staging</span>
+<span class="cmd">rsync -avP \</span>
+<span class="cmd">  artifact_directory/ \</span>
+<span class="cmd">  x_mohameta@shaheen3.hpc.kaust.edu.sa:\</span>
+<span class="cmd">  /scratch/project/k03/support_team/6####/models/artifact_name/</span></pre>
+            <div class="tags">
+              <span class="tag tag-system">ibex → sh3 cpup</span>
+              <span class="tag tag-system">outside dashboard</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Phase 2: Shaheen cpup -->
+    <div class="phase">
+      <div class="phase-label">phase 2 — shaheen3 cpup</div>
+      <div class="steps">
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">5</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Verify the checksum on Shaheen3</div>
+            <div class="step-body">After the transfer completes, verify the checksum on Shaheen3 to confirm the files arrived intact. If verification fails, re-transfer from Ibex.</div>
+            <pre><span class="comment"># on sh3 login node</span>
+<span class="cmd">cd /scratch/project/k03/support_team/6####/models/artifact_name/</span>
+<span class="cmd">sha256sum -c checksum.sha256</span>
+<span class="comment"># all files should show: OK</span></pre>
+            <div class="tags">
+              <span class="tag tag-system">sh3 cpup</span>
+              <span class="tag tag-ok">must pass before proceeding</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">6</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Open an RT ticket for data movement</div>
+            <div class="step-body">Open a ticket in the RT ticketing system for the data movement request. Note the ticket number — you will need it in the dashboard. The form cannot be submitted without it.</div>
+            <div class="tags">
+              <span class="tag tag-warn">required — RT ticket number gates first save</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">7</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Launch the dashboard</div>
+            <div class="step-body">Submit the Slurm job from any directory on Shaheen3. The job prints the SSH tunnel command and URL to the log file.</div>
+            <pre><span class="comment"># submit the job</span>
+<span class="cmd">sbatch /scratch/project/k03/support_team/launch_metadata/metadata-dashboard.slurm</span>
+
+<span class="comment"># watch the log for connection instructions</span>
+<span class="cmd">tail -f /scratch/project/k03/support_team/launch_metadata/logs/dashboard_&lt;JOBID&gt;.log</span></pre>
+            <div class="dashboard-callout callout-curator">
+              <div class="callout-icon">📋</div>
+              <div class="callout-text">
+                <strong>log output</strong>
+                The log will print a line like:<br>
+                <code style="font-family:var(--mono);font-size:12px;color:var(--curator)">ssh -L 8543:nid001234:8543 x_mohameta@login.hpc.kaust.edu.sa</code><br>
+                Run that command on your laptop, then open <code style="font-family:var(--mono);font-size:12px">http://localhost:8543</code>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">8</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Sign in as Curator</div>
+            <div class="step-body">The dashboard resolves your role automatically from your Shaheen3 system group membership. You will see the Curator workspace with access to the New Artifact and Existing Artifacts tabs.</div>
+            <div class="tags">
+              <span class="tag tag-system">must be in hpc_support group</span>
+              <span class="tag tag-ok">role auto-detected</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">9</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Register the artifact — New or Import</div>
+            <div class="step-body">You have two paths depending on whether this is a new artifact or an existing hand-authored YML.</div>
+            <div class="dashboard-callout callout-curator">
+              <div class="callout-icon">✨</div>
+              <div class="callout-text">
+                <strong>New artifact — recommended path</strong>
+                Go to <strong>1 — Curate → New artifact tab</strong>. Enter the source path and click <strong>Auto-fill</strong> — the dashboard extracts the artifact name, type, AIMCR reference, size, and checksum filename automatically. Fill remaining fields, enter the RT ticket number, tick checksum verified on cpup, and click <strong>Stage artifact</strong>.
+              </div>
+            </div>
+            <div class="dashboard-callout callout-curator" style="margin-top:8px">
+              <div class="callout-icon">📥</div>
+              <div class="callout-text">
+                <strong>Existing YML — import path</strong>
+                Go to <strong>4 — Import</strong>. Paste the full path to the existing YML file and click <strong>Load file</strong>. The dashboard reads the file tolerantly, flags any duplicate keys or missing fields, and pre-fills the form. Fill any gaps, then click <strong>Import artifact</strong>.
+              </div>
+            </div>
+            <div class="tags">
+              <span class="tag tag-db">writes YML to disk</span>
+              <span class="tag tag-db">creates modlog sidecar</span>
+              <span class="tag tag-db">appends to manifest.yml</span>
+              <span class="tag tag-db">registers in DB</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">10</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Edit metadata at any time</div>
+            <div class="step-body">Go to <strong>Existing artifacts</strong>, find the artifact in the table, and click Open. All identity and curation fields are editable. Every save records a modification log entry showing exactly which fields changed and from what value to what value.</div>
+            <div class="dashboard-callout callout-curator">
+              <div class="callout-icon">🔒</div>
+              <div class="callout-text">
+                <strong>field ownership</strong>
+                As curator you can edit all identity and curation fields at any time. Moving fields (moved_by, date_moved, gpup checksum) are read-only for you — those belong to the mover.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-curator">11</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Block or reject if something is wrong</div>
+            <div class="step-body">If a problem is discovered — bad checksum, wrong path, quota exceeded — open the artifact detail, expand Actions, select Block, enter a reason, and click Apply action. The status changes to blocked and the data movers will see the reason. To unblock, select Reinstate.</div>
+            <div class="tags">
+              <span class="tag tag-warn">blocked — temporary hold, resolvable</span>
+              <span class="tag tag-warn">rejected — soft refusal, reinstatable</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MOVER -->
+<section id="mover" class="role-section">
+  <div class="container">
+    <div class="role-header">
+      <span class="role-badge badge-mover">Mover</span>
+      <h2 class="role-title">Data Mover</h2>
+      <p class="role-desc">Transfers staged artifacts from cpup to gpup. Verifies integrity on arrival. Confirms the move.</p>
+    </div>
+
+    <div class="phase">
+      <div class="phase-label">phase 1 — prepare</div>
+      <div class="steps">
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">1</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Launch the dashboard</div>
+            <div class="step-body">Submit the Slurm job and follow the printed tunnel instructions — same as the curator.</div>
+            <pre><span class="cmd">sbatch /scratch/project/k03/support_team/launch_metadata/metadata-dashboard.slurm</span>
+<span class="cmd">tail -f /scratch/project/k03/support_team/launch_metadata/logs/dashboard_&lt;JOBID&gt;.log</span></pre>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">2</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Find staged artifacts</div>
+            <div class="step-body">Go to <strong>2 — Move</strong>. The table shows only artifacts with status staged or blocked. Use the search box and filters to find the artifact you need to move.</div>
+            <div class="dashboard-callout callout-mover">
+              <div class="callout-icon">🔒</div>
+              <div class="callout-text">
+                <strong>read-only curation fields</strong>
+                When you open an artifact, all curation fields filled by the curator are shown read-only. You can see the source path, checksum details, curation notes, and any blocking reasons — but cannot edit them.
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-label">phase 2 — transfer</div>
+      <div class="steps">
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">3</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Verify the destination path is accessible</div>
+            <div class="step-body">Before transferring, confirm the destination path exists and is writable. The dashboard checks this and shows a green confirmation when the path is reachable.</div>
+            <pre><span class="comment"># manual check on sh3</span>
+<span class="cmd">ls /scratch/project/k#####/models/</span>
+<span class="cmd">lfs quota -u $USER /scratch</span></pre>
+            <div class="tags">
+              <span class="tag tag-warn">check quota before transferring large artifacts</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">4</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Transfer artifact + checksum from cpup to gpup</div>
+            <div class="step-body">Run the transfer outside the dashboard. Use rsync with checksum verification to ensure integrity. Transfer both the artifact and its checksum file together.</div>
+            <pre><span class="comment"># transfer from cpup staging to gpup destination</span>
+<span class="cmd">rsync -avP \</span>
+<span class="cmd">  /scratch/project/k03/support_team/6####/models/artifact_name/ \</span>
+<span class="cmd">  /scratch/project/k#####/models/artifact_name/</span></pre>
+            <div class="tags">
+              <span class="tag tag-system">sh3 cpup → sh3 gpup</span>
+              <span class="tag tag-system">outside dashboard</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">5</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Verify the checksum on gpup</div>
+            <div class="step-body">After the transfer, run the checksum verification at the destination. Every file must pass before confirming the move in the dashboard.</div>
+            <pre><span class="comment"># at the destination on gpup</span>
+<span class="cmd">cd /scratch/project/k#####/models/artifact_name/</span>
+<span class="cmd">sha256sum -c checksum.sha256</span>
+<span class="comment"># all files must show: OK</span></pre>
+            <div class="tags">
+              <span class="tag tag-ok">must pass before confirming in dashboard</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-label">phase 3 — confirm in dashboard</div>
+      <div class="steps">
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">6</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Fill moving fields</div>
+            <div class="step-body">Return to the artifact in the dashboard. In the Moving fields section, tick Verified on gpup and enter your username. Add any moving notes. Click <strong>Save moving fields</strong>.</div>
+            <div class="dashboard-callout callout-mover">
+              <div class="callout-icon">✏️</div>
+              <div class="callout-text">
+                <strong>your fields to fill</strong>
+                checksum_verified_gpup (verified + verified_by) and moving_notes. These can be edited after confirmation if you make a mistake — every edit is logged with a diff.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">7</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Confirm the move</div>
+            <div class="step-body">Expand the <strong>Confirm move</strong> section and click <strong>Confirm move</strong>. The dashboard sets the status to moved, records your username and timestamp, updates the partition to gpu, writes the YML snapshot, and syncs the manifest.</div>
+            <div class="dashboard-callout callout-mover">
+              <div class="callout-icon">✅</div>
+              <div class="callout-text">
+                <strong>what happens on confirm</strong>
+                status → moved · partition → gpu · date_moved auto-set · moved_by auto-captured · manifest entry updated · modification log appended
+              </div>
+            </div>
+            <div class="tags">
+              <span class="tag tag-db">YML updated on disk</span>
+              <span class="tag tag-db">manifest synced</span>
+              <span class="tag tag-db">DB updated</span>
+              <span class="tag tag-db">modlog appended</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-mover">8</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Block if something goes wrong</div>
+            <div class="step-body">If the destination is inaccessible, the checksum fails, or quota is exceeded — use the Actions section to block the artifact with a reason. The curator will see the reason. Use Reinstate when the issue is resolved.</div>
+            <div class="tags">
+              <span class="tag tag-warn">reason required to block</span>
+              <span class="tag tag-warn">reason propagated to modification log</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- BROWSER -->
+<section id="browser" class="role-section">
+  <div class="container">
+    <div class="role-header">
+      <span class="role-badge badge-browser">Browser</span>
+      <h2 class="role-title">Read-Only Access</h2>
+      <p class="role-desc">PIs, collaborators, and guests. Full visibility into artifact status and metadata. No write access.</p>
+    </div>
+
+    <div class="phase">
+      <div class="phase-label">access</div>
+      <div class="steps">
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-browser">1</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Launch the dashboard</div>
+            <div class="step-body">Submit the Slurm job and follow the printed tunnel instructions — same as the curator. You need a Shaheen3 account and VPN or KAUST network access.</div>
+            <pre><span class="comment"># run on your laptop</span>
+<span class="cmd">sbatch /scratch/project/k03/support_team/launch_metadata/metadata-dashboard.slurm</span>
+<span class="cmd">tail -f /scratch/project/k03/support_team/launch_metadata/logs/dashboard_<JOBID>.log</span>
+<span class="comment"># then open http://localhost:&lt;PORT&gt;</span></pre>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-browser">2</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">Browse all artifacts</div>
+            <div class="step-body">Navigate to <strong>3 — Browse</strong>. All artifacts across all projects are listed. Filter by name, type (dataset / model / software), or status (staged / moved / blocked / rejected).</div>
+            <div class="dashboard-callout callout-browser">
+              <div class="callout-icon">🔍</div>
+              <div class="callout-text">
+                <strong>what you can see</strong>
+                Full artifact metadata — identity, curation details, paths, checksum verification status, moving details, status history, and the complete modification log showing who changed what and when.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-num-col">
+            <div class="step-num step-num-browser">3</div>
+            <div class="step-line"></div>
+          </div>
+          <div class="step-content">
+            <div class="step-title">View the modification log</div>
+            <div class="step-body">Open any artifact and expand <strong>Modification log</strong> to see a full timeline of every action taken — staged, moved, blocked, updated — with the actor's username, timestamp, and a diff of what changed.</div>
+            <div class="tags">
+              <span class="tag tag-system">read-only</span>
+              <span class="tag tag-system">no write access on any page</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    Metadata Dashboard · Shaheen3 HPC · KAUST · k03 · Support team: help@hpc.kaust.edu.sa
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,21 @@
+#!/bin/bash
+
+module load singularity 2>/dev/null 1>/dev/null
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SIF="/scratch/project/k03/support_team/Metadata_Dashboard/dashboard.sif"
+APP_DIR="/scratch/project/k03/support_team/Metadata_Dashboard"
+SCRATCH_BASE="/scratch/project/k03/support_team"
+DB_DIR="/scratch/project/k03/artifact_db:/scratch/project/k03/artifact_db"
+
+if [ ! -f "$SIF" ]; then
+    echo "error: dashboard.sif not found at $SIF"
+    exit 1
+fi
+
+exec singularity exec \
+    --bind "${APP_DIR}:/app" \
+    --bind "${DB_DIR}" \
+    --bind "${SCRATCH_BASE}:${SCRATCH_BASE}" \
+    "$SIF" \
+    python3 /app/cli/cli.py "$@"
