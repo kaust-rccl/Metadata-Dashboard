@@ -188,3 +188,33 @@ def modlog_path(
 # project_dir kept so any external script importing it still works.
 # Internally everything uses proposal_dir.
 project_dir = proposal_dir
+
+
+# ── HPC pipeline (ticket-driven, DB-only) ────────────────────────────────────
+
+TRANSFERS_DB_PATH: Path = Path(
+    "/scratch/project/k03/artifact_db/transfers.db"
+)
+TRANSFERS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+class TransferStatus(str, Enum):
+    """
+    Lifecycle status for HPC pipeline (ticket-driven) transfers.
+    No YAML backing — DB is the sole source of truth.
+    """
+    PENDING     = "pending"      # record created, pre-move not yet done
+    PREMOVE     = "pre-move"     # checksum generated, awaiting data movement
+    IN_PROGRESS = "in-progress"  # data being moved
+    VERIFYING   = "verifying"    # post-move checksum running
+    COMPLETED   = "completed"    # verified, all files OK
+    ANOMALY     = "anomaly"      # verification found failures
+    BLOCKED     = "blocked"      # on hold
+
+
+class TransferType(str, Enum):
+    """Artifact type for HPC pipeline transfers."""
+    DATASET  = "dataset"
+    MODEL    = "model"
+    SOFTWARE = "software"
+    OTHER    = "other"
