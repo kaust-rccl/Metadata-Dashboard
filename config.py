@@ -32,7 +32,7 @@ from pathlib import Path
 STAGING_BASE:  Path = Path("/scratch/project/k03/support_team/")
 PROJECTS_BASE: Path = Path("/scratch/project/k03/support_team/")
 DB_PATH:       Path = Path(
-    "/scratch/project/k03/artifact_db/tracker.db"
+    "/scratch/project/k03/support_team/mock_db/tracker.db"
 )
 
 # Resolved at import time so all modules share the same object
@@ -193,7 +193,7 @@ project_dir = proposal_dir
 # ── HPC pipeline (ticket-driven, DB-only) ────────────────────────────────────
 
 TRANSFERS_DB_PATH: Path = Path(
-    "/scratch/project/k03/artifact_db/transfers.db"
+    "/scratch/project/k03/support_team/mock_db/transfers.db"
 )
 TRANSFERS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 

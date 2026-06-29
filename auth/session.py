@@ -44,6 +44,7 @@ def init_session(db=None) -> None:
         role     = resolve_role(username)
         st.session_state[_KEY_USERNAME] = username
         st.session_state[_KEY_ROLE]     = role
+    _render_sidebar() 
 
 def current_username() -> str:
     return st.session_state.get(_KEY_USERNAME, "unknown")
@@ -76,3 +77,34 @@ def require_role(*allowed: Role) -> bool:
         )
         return False
     return True
+
+def _render_sidebar() -> None:
+    """Inject sidebar chrome — called from init_session so every page gets it."""
+    import os
+
+    # hide Streamlit's auto-generated page list
+    st.markdown("""
+    <style>
+    [data-testid="stSidebarNav"] { display: none; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # pipeline selector
+    pipeline = st.sidebar.radio(
+        "Data movement pipeline",
+        ["HPC-AI", "HPC"],
+        key="pipeline_selector",
+    )
+    st.sidebar.markdown("---")
+
+    if pipeline == "HPC-AI":
+        st.sidebar.markdown("**HPC-AI pipeline**")
+        st.sidebar.page_link("pages/1_curate.py",  label="Curate",  icon="✏️")
+        st.sidebar.page_link("pages/2_move.py",    label="Move",    icon="🚚")
+        st.sidebar.page_link("pages/3_browse.py",  label="Browse",  icon="🔍")
+        st.sidebar.page_link("pages/4_import.py",  label="Import",  icon="📥")
+    else:
+        st.sidebar.markdown("**HPC pipeline**")
+        st.sidebar.page_link("pages/5_hpc_transfer.py", label="HPC Transfer", icon="📦")
+
+    st.sidebar.markdown("---")

@@ -4,13 +4,13 @@
 #SBATCH --partition=shared
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=4G
-#SBATCH --output=/scratch/project/k03/support_team/launch_metadata/logs/dashboard_%j.log
+#SBATCH --mem=32G
+#SBATCH --output=logs/dashboard_%j.log
 
-APP_DIR="/scratch/project/k03/support_team/Metadata_Dashboard"
+APP_DIR="/scratch/project/k03/support_team/mock_db/v1/Metadata-Dashboard/"
 SIF="${APP_DIR}/dashboard.sif"
 SCRATCH_BASE="/scratch/project/k03/support_team"
-DB_DIR="/scratch/project/k03/artifact_db"       # tracker.db + transfers.db
+DB_DIR="/scratch/project/k03/support_team/mock_db"       # tracker.db + transfers.db
 
 module load singularity > /dev/null 2>&1
 export SINGULARITY_CACHEDIR=${SCRATCH}/singularity_cache
