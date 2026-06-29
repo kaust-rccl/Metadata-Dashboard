@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HPC Transfer Pipeline — User Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:     #0d0f14;
+    --bg2:    #13161e;
+    --bg3:    #1a1e28;
+    --border: #252a38;
+    --text:   #c8ccd8;
+    --dim:    #5a6080;
+    --bright: #e8eaf0;
+    --hpc:    #6c8fff;
+    --hpc-dim:rgba(108,143,255,0.12);
+    --green:  #1dbf8a;
+    --amber:  #e89440;
+    --red:    #d95555;
+    --mono:   'IBM Plex Mono', monospace;
+    --sans:   'IBM Plex Sans', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.7;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 24px 80px;
+  }
+
+  /* header */
+  header {
+    padding: 52px 0 40px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 48px;
+  }
+  .header-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(26px, 4vw, 40px);
+    font-weight: 300;
+    color: var(--bright);
+    letter-spacing: -0.02em;
+    margin-bottom: 10px;
+  }
+  h1 span { color: var(--hpc); font-weight: 600; }
+  .header-sub { color: var(--dim); font-size: 13px; max-width: 560px; }
+
+  /* nav */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(13,15,20,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex; gap: 0; overflow-x: auto;
+    margin: 0 -24px; padding: 0 24px;
+  }
+  nav a {
+    font-family: var(--mono); font-size: 11px;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    text-decoration: none; color: var(--dim);
+    padding: 13px 14px; white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s;
+  }
+  nav a:hover { color: var(--text); }
+  nav a.active { color: var(--hpc); border-bottom-color: var(--hpc); }
+
+  /* sections */
+  section { padding: 52px 0; border-bottom: 1px solid var(--border); }
+  section:last-child { border-bottom: none; }
+
+  h2 {
+    font-size: 22px; font-weight: 400;
+    color: var(--bright); letter-spacing: -0.01em;
+    margin-bottom: 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .tab-badge {
+    font-family: var(--mono); font-size: 10px;
+    padding: 3px 10px; border-radius: 3px;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    background: var(--hpc-dim); color: var(--hpc);
+    border: 1px solid rgba(108,143,255,0.25);
+    flex-shrink: 0;
+  }
+
+  h3 {
+    font-size: 14px; font-weight: 600;
+    color: var(--bright); margin: 24px 0 10px;
+  }
+
+  p { color: var(--text); margin-bottom: 14px; line-height: 1.7; }
+  p:last-child { margin-bottom: 0; }
+
+  /* section label */
+  .section-label {
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--dim); display: flex; align-items: center;
+    gap: 12px; margin-bottom: 20px;
+  }
+  .section-label::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+  }
+
+  /* steps */
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step { display: grid; grid-template-columns: 36px 1fr; gap: 0 16px; }
+  .step-left { display: flex; flex-direction: column; align-items: center; }
+  .step-num {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--hpc-dim); color: var(--hpc);
+    border: 1px solid rgba(108,143,255,0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    flex-shrink: 0; margin-top: 3px;
+  }
+  .step-line {
+    flex: 1; width: 1px; background: var(--border);
+    margin: 4px 0; min-height: 12px;
+  }
+  .step:last-child .step-line { display: none; }
+  .step-content { padding-bottom: 24px; }
+  .step-title {
+    font-size: 13px; font-weight: 500; color: var(--bright);
+    line-height: 1.4; padding-top: 4px; margin-bottom: 6px;
+  }
+  .step-body { font-size: 13px; color: var(--dim); line-height: 1.65; }
+
+  /* code */
+  pre {
+    background: #0a0c10; border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 16px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.7;
+    overflow-x: auto; margin: 10px 0; color: #6878a0;
+  }
+  code {
+    font-family: var(--mono); font-size: 12px;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px; border-radius: 3px; color: var(--text);
+  }
+
+  /* callout */
+  .callout {
+    border-radius: 6px; padding: 12px 16px;
+    margin: 14px 0; font-size: 13px;
+    display: flex; gap: 10px; align-items: flex-start;
+    line-height: 1.6;
+  }
+  .callout-icon { flex-shrink: 0; font-size: 15px; margin-top: 1px; }
+  .c-warn  { background: rgba(232,148,64,0.1);  border: 1px solid rgba(232,148,64,0.2);  color: var(--amber); }
+  .c-info  { background: var(--hpc-dim);          border: 1px solid rgba(108,143,255,0.2); color: var(--hpc); }
+  .c-ok    { background: rgba(29,191,138,0.1);  border: 1px solid rgba(29,191,138,0.2);  color: var(--green); }
+
+  /* table */
+  .tbl-wrap { overflow-x: auto; margin: 14px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; padding: 8px 12px;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--dim); border-bottom: 1px solid var(--border);
+    font-weight: 500;
+  }
+  td {
+    padding: 9px 12px; border-bottom: 1px solid var(--border);
+    color: var(--text); vertical-align: top;
+  }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  td code { font-size: 11px; }
+
+  /* status badge */
+  .s { display: inline-block; font-family: var(--mono); font-size: 11px;
+       padding: 2px 8px; border-radius: 3px; font-weight: 600;
+       letter-spacing: 0.06em; white-space: nowrap; }
+  .s-pending   { background: rgba(90,96,128,0.12);   color: #7a82a0; }
+  .s-premove   { background: var(--hpc-dim);          color: var(--hpc); }
+  .s-prog      { background: rgba(232,148,64,0.1);   color: var(--amber); }
+  .s-verifying { background: var(--hpc-dim);          color: var(--hpc); }
+  .s-completed { background: rgba(29,191,138,0.1);   color: var(--green); }
+  .s-anomaly   { background: rgba(217,85,85,0.1);    color: var(--red); }
+  .s-blocked   { background: rgba(232,148,64,0.1);   color: var(--amber); }
+
+  /* workspace tree */
+  .tree {
+    background: #0a0c10; border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px 18px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.9;
+    color: #6878a0; margin: 14px 0;
+  }
+  .tree .f { color: var(--text); }
+  .tree .c { color: var(--dim); margin-left: 8px; }
+
+  /* note */
+  .note {
+    background: rgba(200,204,216,0.04); border: 1px solid var(--border);
+    border-left: 3px solid var(--dim); border-radius: 0 6px 6px 0;
+    padding: 10px 14px; font-size: 13px; color: var(--dim);
+    line-height: 1.6; margin: 14px 0;
+  }
+  .note strong { color: var(--text); }
+
+  /* flow */
+  .flow {
+    display: flex; flex-direction: column;
+    gap: 0; padding: 20px; background: var(--bg2);
+    border: 1px solid var(--border); border-radius: 8px; margin: 14px 0;
+  }
+  .flow-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 0;
+  }
+  .flow-arrow {
+    width: 1px; background: var(--border); height: 16px;
+    margin-left: 11px;
+  }
+  .flow-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .fd-dart { background: var(--hpc); }
+  .fd-term { background: var(--green); }
+  .flow-label { font-size: 13px; color: var(--bright); }
+  .flow-where {
+    font-family: var(--mono); font-size: 10px;
+    padding: 2px 8px; border-radius: 3px;
+    letter-spacing: 0.08em; margin-left: auto; flex-shrink: 0;
+  }
+  .fw-dart { background: var(--hpc-dim); color: var(--hpc); }
+  .fw-term { background: rgba(29,191,138,0.1); color: var(--green); }
+
+  footer {
+    border-top: 1px solid var(--border); padding: 28px 0;
+    font-family: var(--mono); font-size: 11px;
+    color: var(--dim); letter-spacing: 0.08em;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="header-label">DART · Shaheen3 HPC · KAUST · k03 · System Administrators</p>
+  <h1>HPC Transfer Pipeline<br><span>User Guide</span></h1>
+  <p class="header-sub">Handling ticket-driven data transfers from receipt to verified completion.</p>
+</header>
+
+<nav>
+  <a href="#overview" class="active">Overview</a>
+  <a href="#new">New transfer</a>
+  <a href="#premove">Pre-move</a>
+  <a href="#postmove">Post-move</a>
+  <a href="#log">Transfer log</a>
+  <a href="#reference">Reference</a>
+</nav>
+
+<!-- OVERVIEW -->
+<section id="overview">
+  <div class="section-label">end-to-end flow</div>
+
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-dot fd-dart"></div>
+      <div class="flow-label">Receive RT ticket → create transfer record</div>
+      <div class="flow-where fw-dart">DART — New transfer</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-row">
+      <div class="flow-dot fd-dart"></div>
+      <div class="flow-label">Generate checksum script</div>
+      <div class="flow-where fw-dart">DART — Pre-move</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-row">
+      <div class="flow-dot fd-term"></div>
+      <div class="flow-label">Submit checksum job at source</div>
+      <div class="flow-where fw-term">Terminal</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-row">
+      <div class="flow-dot fd-term"></div>
+      <div class="flow-label">rsync data + checksum to destination</div>
+      <div class="flow-where fw-term">Terminal</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-row">
+      <div class="flow-dot fd-dart"></div>
+      <div class="flow-label">Generate verification script</div>
+      <div class="flow-where fw-dart">DART — Post-move</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-row">
+      <div class="flow-dot fd-term"></div>
+      <div class="flow-label">Submit verify job at destination</div>
+      <div class="flow-where fw-term">Terminal</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-row">
+      <div class="flow-dot fd-dart"></div>
+      <div class="flow-label">Import result → transfer marked completed or anomaly</div>
+      <div class="flow-where fw-dart">DART — Post-move</div>
+    </div>
+  </div>
+
+  <div class="callout c-info">
+    <div class="callout-icon">ℹ</div>
+    <div>DART does not submit Slurm jobs or move files. It generates the scripts, tracks the record, and parses the outcome. Every submission and every file transfer is your responsibility.</div>
+  </div>
+
+  <h3>Navigating to the HPC pipeline</h3>
+  <p>In the sidebar, under <strong>Data movement pipeline</strong>, select <strong>HPC</strong>. You will see the HPC Transfer page with four tabs.</p>
+</section>
+
+<!-- NEW TRANSFER -->
+<section id="new">
+  <h2><span class="tab-badge">Tab 1</span> New transfer</h2>
+  <p>Open this tab when a new RT ticket comes in. Fill in the details and create the database record. Nothing is written to disk at this point — it is purely a record that gives the transfer a unique ID used throughout the rest of the process.</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Field</th><th>Description</th></tr>
+      <tr><td><code>RT ticket number</code></td><td>The RT ticket number for this request</td></tr>
+      <tr><td><code>Artifact name</code></td><td>Short identifier for what is being moved, e.g. <code>imagenet-val</code></td></tr>
+      <tr><td><code>Requester username</code></td><td>Shaheen3 username of the person who raised the ticket</td></tr>
+      <tr><td><code>Type</code></td><td>dataset, model, software, or other</td></tr>
+      <tr><td><code>Source path</code></td><td>Full path to the artifact on cpup</td></tr>
+      <tr><td><code>Destination path</code></td><td>Full path to the destination on gpup</td></tr>
+      <tr><td><code>Size (GB)</code></td><td>Approximate size — for record-keeping only</td></tr>
+      <tr><td><code>Notes</code></td><td>Any context about the transfer</td></tr>
+    </table>
+  </div>
+
+  <p>Click <strong>Create transfer record</strong>. A workspace directory is created at:</p>
+  <pre>/scratch/project/k03/support_team/workspace/&lt;ticket&gt;_&lt;name&gt;/</pre>
+  <p>Note the transfer ID shown in the success message — you will need it in Post-move.</p>
+</section>
+
+<!-- PRE-MOVE -->
+<section id="premove">
+  <h2><span class="tab-badge">Tab 2</span> Pre-move</h2>
+  <p>Generate a checksum of all files at the source before touching any data. This is the reference fingerprint. After the data is moved, the checksum is verified at the destination — if every file matches, the transfer is confirmed clean.</p>
+
+  <div class="section-label" style="margin-top:24px">steps</div>
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Select the transfer</div>
+        <div class="step-body">Pick the transfer from the dropdown. Ticket, artifact name, and source path are filled automatically.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Generate the script</div>
+        <div class="step-body">Click <strong>Generate &amp; save pre-move script</strong>. The dashboard writes <code>generate_checksum.slurm</code> to the workspace. The checksum file will be written inside the source directory — the path is shown in the info box.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Submit the script at the source</div>
+        <div class="step-body">The sbatch command is shown after generation. Run it in your terminal:</div>
+        <pre>sbatch /scratch/project/k03/support_team/workspace/&lt;ticket&gt;_&lt;name&gt;/generate_checksum.slurm</pre>
+        <div class="step-body" style="margin-top:8px">Monitor the job:</div>
+        <pre>tail -f /scratch/project/k03/support_team/workspace/&lt;ticket&gt;_&lt;name&gt;/logs/checksum_generate_&lt;JOBID&gt;.log</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-left"><div class="step-num">4</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Move the data</div>
+        <div class="step-body">Once the checksum job completes, transfer the data. The checksum file is inside the source directory and travels with the data automatically.</div>
+        <pre>rsync -avP /source/path/ /destination/path/</pre>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="callout c-info">
+    <div class="callout-icon">ℹ</div>
+    <div>The checksum uses relative paths so it remains valid wherever the data lands. <code>checksum.sha256</code> and <code>artifact.yml</code> are excluded from the checksum automatically.</div>
+  </div>
+</section>
+
+<!-- POST-MOVE -->
+<section id="postmove">
+  <h2><span class="tab-badge">Tab 3</span> Post-move</h2>
+  <p>Verify that every file arrived intact at the destination. This tab has two steps — generating the verify script and importing the result.</p>
+
+  <h3>Step 1 — Generate verification script</h3>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Select the transfer</div>
+        <div class="step-body">Pick the same transfer from the dropdown. Ticket, name, and destination path are filled automatically.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Generate the script</div>
+        <div class="step-body">Click <strong>Generate &amp; save verify script</strong>. The dashboard writes <code>verify_checksum.slurm</code> to the workspace. The result file path is shown — it will be written to the workspace once the job completes.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Submit the script</div>
+        <div class="step-body">Submit from anywhere — the script uses absolute paths:</div>
+        <pre>sbatch /scratch/project/k03/support_team/workspace/&lt;ticket&gt;_&lt;name&gt;/verify_checksum.slurm</pre>
+        <div class="step-body" style="margin-top:8px">Monitor:</div>
+        <pre>tail -f /scratch/project/k03/support_team/workspace/&lt;ticket&gt;_&lt;name&gt;/logs/checksum_verify_&lt;JOBID&gt;.log</pre>
+        <div class="step-body" style="margin-top:8px">The job writes a summary to the log and <code>verify_result.txt</code> to the workspace.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <h3>Step 2 — Import verification result</h3>
+
+  <p>Once the verification job completes, return to the Post-move tab.</p>
+  <p>The Transfer ID and result file path are pre-filled. Click <strong>Import result &amp; complete record</strong>. DART parses the result, records the pass/fail counts, and marks the transfer:</p>
+
+  <div style="display:flex;gap:12px;margin:14px 0;flex-wrap:wrap">
+    <div class="callout c-ok" style="flex:1;min-width:200px">
+      <div class="callout-icon">✓</div>
+      <div>All files OK → transfer marked <strong>completed</strong></div>
+    </div>
+    <div class="callout c-warn" style="flex:1;min-width:200px">
+      <div class="callout-icon">⚠</div>
+      <div>Any failures → transfer marked <strong>anomaly</strong> — do not close the ticket yet</div>
+    </div>
+  </div>
+
+  <h3>Handling anomalies</h3>
+  <p>If the transfer is marked anomaly:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-left"><div class="step-num">1</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Check which files failed</div>
+        <pre>grep "FAILED" /scratch/project/k03/support_team/workspace/&lt;ticket&gt;_&lt;name&gt;/verify_result.txt</pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-left"><div class="step-num">2</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Re-rsync the failed files</div>
+        <pre>rsync -avP /source/path/failed_file /destination/path/</pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-left"><div class="step-num">3</div><div class="step-line"></div></div>
+      <div class="step-content">
+        <div class="step-title">Regenerate and resubmit the verify script</div>
+        <div class="step-body">Go back to Post-move Step 1, regenerate the script, resubmit, then import the new result.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TRANSFER LOG -->
+<section id="log">
+  <h2><span class="tab-badge">Tab 4</span> Transfer log</h2>
+  <p>Shows all transfers with status, ticket, artifact name, type, and operator. Use the search box to filter by ticket number and the dropdown to filter by status.</p>
+  <p>Click <strong>Detail</strong> on any row to open the detail view.</p>
+
+  <h3>Detail view</h3>
+  <p>The detail view has five sections:</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Section</th><th>What it shows / does</th></tr>
+      <tr><td><strong>Edit record</strong></td><td>All fields are editable. Shows a sync warning if an edited field affects an already-generated script — directing you to regenerate it from the Pre-move or Post-move tab.</td></tr>
+      <tr><td><strong>Verification result</strong></td><td>Total, passed, and failed file counts from the last verification run. Only visible after a result has been imported.</td></tr>
+      <tr><td><strong>Modification log</strong></td><td>Every action from the workspace YML — actor, timestamp, action, note.</td></tr>
+      <tr><td><strong>Audit log (DB)</strong></td><td>Every database-level event — status changes, field edits.</td></tr>
+      <tr><td><strong>Update status</strong></td><td>Manually set any status with an optional note. Use this for <code>in-progress</code> or <code>blocked</code>.</td></tr>
+    </table>
+  </div>
+
+  <div class="callout c-warn">
+    <div class="callout-icon">⚠</div>
+    <div><strong>Editing after scripts are generated</strong> — if you change <code>source_path</code>, <code>destination_path</code>, <code>ticket_number</code>, or <code>artifact_name</code> after a script has been written, a warning appears. Go to the Pre-move or Post-move tab, select the transfer, and regenerate the affected script. The old script is overwritten.</div>
+  </div>
+</section>
+
+<!-- REFERENCE -->
+<section id="reference">
+  <h2>Reference</h2>
+
+  <div class="section-label">status lifecycle</div>
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Status</th><th>Set by</th><th>Meaning</th></tr>
+      <tr><td><span class="s s-pending">PENDING</span></td><td>New transfer tab</td><td>Record created, no action taken</td></tr>
+      <tr><td><span class="s s-premove">PRE-MOVE</span></td><td>Pre-move tab</td><td>Checksum script generated</td></tr>
+      <tr><td><span class="s s-prog">IN-PROGRESS</span></td><td>Manual update</td><td>Transfer underway</td></tr>
+      <tr><td><span class="s s-verifying">VERIFYING</span></td><td>Post-move tab</td><td>Verify script generated</td></tr>
+      <tr><td><span class="s s-completed">COMPLETED</span></td><td>Post-move tab</td><td>All files verified OK</td></tr>
+      <tr><td><span class="s s-anomaly">ANOMALY</span></td><td>Post-move tab</td><td>One or more files failed verification</td></tr>
+      <tr><td><span class="s s-blocked">BLOCKED</span></td><td>Manual update</td><td>Transfer on hold</td></tr>
+    </table>
+  </div>
+
+  <div class="section-label" style="margin-top:36px">workspace layout</div>
+  <div class="tree">
+/scratch/project/k03/support_team/workspace/<span class="f">&lt;ticket&gt;_&lt;name&gt;/</span>
+├── <span class="f">generate_checksum.slurm</span>  <span class="c">← generated by Pre-move tab</span>
+├── <span class="f">verify_checksum.slurm</span>    <span class="c">← generated by Post-move tab</span>
+├── <span class="f">verify_result.txt</span>         <span class="c">← written by verify job</span>
+├── <span class="f">artifact.yml</span>               <span class="c">← metadata, updated at each stage</span>
+├── <span class="f">artifact.modlog.yml</span>        <span class="c">← append-only event log</span>
+└── logs/
+    ├── <span class="f">checksum_generate_&lt;jobid&gt;.log</span>
+    └── <span class="f">checksum_verify_&lt;jobid&gt;.log</span>
+  </div>
+
+  <div class="section-label" style="margin-top:36px">outside the dashboard</div>
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Step</th><th>Command</th></tr>
+      <tr><td>Submit checksum job</td><td><code>sbatch workspace/&lt;ticket&gt;_&lt;name&gt;/generate_checksum.slurm</code></td></tr>
+      <tr><td>Monitor job</td><td><code>squeue --me</code></td></tr>
+      <tr><td>Transfer data</td><td><code>rsync -avP /source/ /destination/</code></td></tr>
+      <tr><td>Submit verify job</td><td><code>sbatch workspace/&lt;ticket&gt;_&lt;name&gt;/verify_checksum.slurm</code></td></tr>
+      <tr><td>Check failed files</td><td><code>grep "FAILED" workspace/&lt;ticket&gt;_&lt;name&gt;/verify_result.txt</code></td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  DART · HPC Transfer Pipeline · Shaheen3 · KAUST · k03
+</footer>
+
+</body>
+</html>
