@@ -40,8 +40,8 @@ def _startup(db: Database) -> None:
     picked back up automatically instead of staying invisible in the UI.
     """
     yml_paths = list_staged_artifacts(PROJECTS_BASE)
-    updated, skipped = db.reconcile_from_ymls(yml_paths)
-    st.session_state["_reconcile_result"] = (updated, skipped)
+    updated, skipped, ignored = db.reconcile_from_ymls(yml_paths)
+    st.session_state["_reconcile_result"] = (updated, skipped, ignored)
 
 
 def _sidebar_identity() -> None:
@@ -84,12 +84,19 @@ def main() -> None:
 
     init_session(db)   # renders the sidebar (identity + pipeline selector)
 
-    updated, skipped = st.session_state.get("_reconcile_result", (0, []))
+    updated, skipped, ignored = st.session_state.get(
+        "_reconcile_result", (0, [], [])
+    )
     if skipped:
         st.sidebar.warning(
             f"{len(skipped)} artifact YML(s) could not be reconciled to the "
             "DB at startup. Check server logs.",
             icon="⚠️",
+        )
+    if ignored:
+        st.sidebar.caption(
+            f"{len(ignored)} non-metadata YML file(s) in the projects tree "
+            "were ignored during sync."
         )
 
     # Navigation hint — links are rendered by auth.session._render_sidebar

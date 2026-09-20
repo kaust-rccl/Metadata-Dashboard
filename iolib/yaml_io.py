@@ -145,13 +145,39 @@ def _comment_before(cm: CommentedMap, key: str, comment: str) -> None:
 
 # ── convenience loaders ───────────────────────────────────────────────────────
 
-def load_artifact_yml(path: Path):
-    """Load an ArtifactYML from disk. Returns None if file missing."""
+def load_artifact_yml(path: Path, strict: bool = False):
+    """
+    Load an ArtifactYML from disk. Returns None if the file is missing or empty.
+
+    With strict=True the file must also be recognised as one of our metadata
+    records (see models.artifact.is_artifact_yml); anything else returns None.
+    Used by the startup sync so foreign YAML files in the projects tree are
+    not parsed into blank artifacts.
+    """
     from models.artifact import ArtifactYML
     d = load_yaml(path)
     if not d:
         return None
+    if strict:
+        ok, _ = is_artifact_yml_file(path, d)
+        if not ok:
+            return None
     return ArtifactYML.from_dict(d)
+
+
+def is_artifact_yml_file(path: Path, data: dict | None = None) -> tuple[bool, str]:
+    """
+    Return (True, "") if the file at `path` holds one of our artifact metadata
+    records, else (False, reason). Pass `data` to avoid re-reading the file.
+    """
+    from models.artifact import is_artifact_yml
+
+    if data is None:
+        try:
+            data = load_yaml(path)
+        except Exception as exc:
+            return False, f"could not be parsed as YAML: {exc}"
+    return is_artifact_yml(data)
 
 
 def save_artifact_yml(path: Path, yml) -> None:

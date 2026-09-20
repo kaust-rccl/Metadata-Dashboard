@@ -345,10 +345,16 @@ class Database:
 
     # ── reconciliation ────────────────────────────────────────────────────────
 
-    def reconcile_from_ymls(self, yml_paths: list[Path]) -> tuple[int, list[str]]:
+    def reconcile_from_ymls(
+        self, yml_paths: list[Path]
+    ) -> tuple[int, list[str], list[str]]:
         """
         Startup reconciliation pass.
         Loads each YML and upserts the DB row to catch any drift.
+
+        Files that are not our artifact metadata (foreign YAML that happens to
+        sit in the projects tree) are recognised and ignored rather than parsed
+        into blank artifacts — see models.artifact.is_artifact_yml.
 
         Upserts the project row first (forcing project_id to the artifact's
         own aimcr_reference, not whatever manifest.yml happens to contain) so
@@ -357,24 +363,37 @@ class Database:
         get healed instead of failing the same FK check again.
 
         Returns:
-            (updated_count, skipped_paths)
-            skipped_paths lists any files that could not be parsed,
-            so the UI can surface them as warnings rather than crashing.
+            (updated_count, skipped_paths, ignored_paths)
+            skipped_paths lists files that look like ours but could not be
+            parsed, so the UI can surface them as warnings.
+            ignored_paths lists files that are simply not ours — informational
+            only, never a warning.
         """
-        from iolib.yaml_io import load_artifact_yml, load_manifest
+        from iolib.yaml_io import load_yaml, load_manifest
+        from models.artifact import ArtifactYML, is_artifact_yml
         from config import manifest_path as mlp_path
         from config import modlog_path as mlp
         from models.manifest import ManifestYML
 
         updated = 0
         skipped: list[str] = []
+        ignored: list[str] = []
 
         for yp in yml_paths:
             try:
-                yml = load_artifact_yml(yp)
-                if yml is None:
-                    skipped.append(str(yp))
+                raw = load_yaml(yp)
+                if not raw:
+                    ignored.append(str(yp))
+                    logger.debug("Reconcile ignored %s: empty file", yp)
                     continue
+
+                recognised, reason = is_artifact_yml(raw)
+                if not recognised:
+                    ignored.append(str(yp))
+                    logger.info("Reconcile ignored %s: %s", yp, reason)
+                    continue
+
+                yml = ArtifactYML.from_dict(raw)
 
                 mp = mlp_path(yml.aimcr_reference)
                 manifest = load_manifest(mp)
@@ -392,7 +411,7 @@ class Database:
                 logger.warning("Reconcile skipped %s: %s", yp, exc)
                 skipped.append(str(yp))
 
-        return updated, skipped
+        return updated, skipped, ignored
 
     def close(self) -> None:
         self._conn.close()

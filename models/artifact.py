@@ -378,6 +378,74 @@ class ArtifactYML:
         )
 
 
+# ── artifact YML recognition ─────────────────────────────────────────────────
+# The startup sync walks the projects tree and will encounter YAML files that
+# have nothing to do with this tracker (PI configs, conda env files, training
+# hyperparameters, etc). Without a check those parse into a default-constructed
+# ArtifactYML and show up as blank rows. These helpers decide whether a loaded
+# mapping is one of our metadata records.
+
+# Every top-level key ArtifactYML.to_dict() emits.
+ARTIFACT_YML_KEYS: frozenset[str] = frozenset({
+    "artifact_name", "artifact_type", "artifact_version", "proposal_title",
+    "project_id", "pi_username", "aimcr_reference", "tracking_ticket",
+    "metadata_creation_date",
+    "dm_ticket_number", "curated_by", "date_staged", "system", "partition",
+    "source_path", "destination_path", "checksum_type", "checksum_source",
+    "checksum_filename", "size_gb", "checksum_verified_cpup", "reference",
+    "reference_group", "curation_notes", "curation_status_reason",
+    "moved_by", "date_moved", "checksum_verified_gpup", "moving_notes",
+    "moving_status_reason",
+    "status", "last_modified", "last_modified_by",
+})
+
+# Keys that must be present and non-empty — a record without these cannot be
+# placed in the tree or shown in the UI, so it is not one of ours.
+ARTIFACT_YML_REQUIRED_KEYS: tuple[str, ...] = (
+    "artifact_name",
+    "artifact_type",
+    "aimcr_reference",
+)
+
+# A hand-authored legacy record may omit many fields, but a foreign YAML file
+# that happens to carry an "artifact_name" key should not slip through on that
+# alone. Require a minimum overlap with our schema as well.
+ARTIFACT_YML_MIN_OVERLAP: int = 6
+
+
+def is_artifact_yml(data: object) -> tuple[bool, str]:
+    """
+    Return (True, "") if `data` looks like one of our artifact metadata
+    records, otherwise (False, reason). `reason` is for logging only.
+
+    Deliberately structural, not strict: it accepts legacy records with
+    missing optional fields and rejects YAML that is not ours at all.
+    """
+    if not isinstance(data, dict) or not data:
+        return False, "not a non-empty YAML mapping"
+
+    missing = [
+        k for k in ARTIFACT_YML_REQUIRED_KEYS
+        if not str(data.get(k, "") or "").strip()
+    ]
+    if missing:
+        return False, f"missing or empty required key(s): {', '.join(missing)}"
+
+    overlap = len(ARTIFACT_YML_KEYS & set(data.keys()))
+    if overlap < ARTIFACT_YML_MIN_OVERLAP:
+        return False, (
+            f"only {overlap} of the expected metadata keys present "
+            f"(minimum {ARTIFACT_YML_MIN_OVERLAP})"
+        )
+
+    try:
+        ArtifactType(str(data["artifact_type"]).strip().lower())
+    except ValueError:
+        return False, f"unrecognised artifact_type: {data['artifact_type']!r}"
+
+    return True, ""
+
+
 # ── field sets used by editable_by() ─────────────────────────────────────────
 
 _CURATOR_FIELDS: frozenset[str] = frozenset({

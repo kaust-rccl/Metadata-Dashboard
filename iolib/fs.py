@@ -78,24 +78,46 @@ def run_checksum_verify(
 
 def list_staged_artifacts(projects_base: Path) -> list[Path]:
     """
-    Return a list of artifact .yml files found under projects_base.
+    Return a list of candidate artifact .yml files found under projects_base.
 
-    Layout expected:
+    Only files sitting at the expected depth and inside a recognised type
+    bucket are returned:
+
         projects_base / 6#### / datasets|models|software / artifact.yml
 
     Skips:
       - .modlog.yml sidecars
       - manifest.yml files
       - anything inside Metadata_Dashboard/
+      - any .yml not at the layout above (stray configs, env files, PI YAMLs)
+
+    This is a structural filter only. Whether a file that passes it actually
+    contains one of our metadata records is decided by
+    models.artifact.is_artifact_yml() at load time.
     """
+    from config import ARTIFACT_TYPE_DIR
+
     if not projects_base.exists():
         return []
-    return sorted(
-        p for p in projects_base.rglob("*.yml")
-        if not p.name.endswith(".modlog.yml")
-        and p.name != "manifest.yml"
-        and "Metadata_Dashboard" not in p.parts
-    )
+
+    type_dirs = set(ARTIFACT_TYPE_DIR.values())
+    found: list[Path] = []
+
+    for p in projects_base.rglob("*.yml"):
+        if p.name.endswith(".modlog.yml") or p.name == "manifest.yml":
+            continue
+        if "Metadata_Dashboard" in p.parts:
+            continue
+        try:
+            rel = p.relative_to(projects_base)
+        except ValueError:
+            continue
+        # expected: <aimcr_reference>/<type_dir>/<file>.yml
+        if len(rel.parts) != 3 or rel.parts[1] not in type_dirs:
+            continue
+        found.append(p)
+
+    return sorted(found)
 
 
 def ensure_artifact_dir(aimcr_reference: str, artifact_type, projects_base: Path) -> Path:
