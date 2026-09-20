@@ -490,8 +490,8 @@ def _validate_import(yml: ArtifactYML, role: Role) -> list[str]:
     if not yml.tracking_ticket.strip():
         errors.append("Tracking ticket is required.")
 
-    # Curation fields — required when curator imports
-    if role == Role.CURATOR:
+    # Curation fields — required when curator (or admin) imports
+    if role in (Role.CURATOR, Role.ADMIN):
         if not yml.dm_ticket_number.strip():
             errors.append("DM ticket number is required.")
         if not yml.source_path.strip():
@@ -521,9 +521,9 @@ def _do_import(yml: ArtifactYML, actor: str, role: Role, db: Database) -> Servic
         yml.metadata_creation_date = now
     if not yml.date_staged and yml.status != Status.MOVED:
         yml.date_staged = now
-    if not yml.curated_by and role == Role.CURATOR:
+    if not yml.curated_by and role in (Role.CURATOR, Role.ADMIN):
         yml.curated_by = actor
-    if not yml.moved_by and role == Role.MOVER:
+    if not yml.moved_by and role in (Role.MOVER, Role.ADMIN):
         yml.moved_by = actor
 
     # Derive YML path — for import we use the canonical path based on

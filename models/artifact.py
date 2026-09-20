@@ -162,6 +162,14 @@ class ArtifactYML:
         Returns the set of field names this role may currently edit.
         Used by the UI layer to decide widget vs plain text rendering.
         """
+        if role == Role.ADMIN:
+            # Superuser: union of both permission sets.
+            base = {"curation_notes", "curation_status_reason"}
+            if not self.is_curator_locked():
+                base |= _CURATOR_FIELDS
+            if not self.is_mover_locked():
+                base |= _MOVER_FIELDS
+            return base
         if role == Role.CURATOR:
             base = {"curation_notes", "curation_status_reason"}
             if not self.is_curator_locked():

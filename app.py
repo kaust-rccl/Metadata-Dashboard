@@ -50,6 +50,7 @@ def _sidebar_identity() -> None:
     role     = current_role()
 
     role_colors = {
+        Role.ADMIN:    "#C2410C",
         Role.CURATOR:  "#1D9E75",
         Role.MOVER:    "#534AB7",
         Role.READONLY: "#5F5E5A",
@@ -70,27 +71,6 @@ def _sidebar_identity() -> None:
         unsafe_allow_html=True,
     )
 
-def _sidebar_pipeline() -> None:
-    st.sidebar.markdown("---")
-    
-    pipeline = st.sidebar.radio(
-        "Data movement pipeline",
-        ["HPC-AI", "HPC"],
-        key="pipeline_selector",
-    )
-    
-    st.sidebar.markdown("---")
-    
-    if pipeline == "HPC-AI":
-        st.sidebar.markdown("**HPC-AI pipeline**")
-        st.sidebar.page_link("pages/1_curate.py",  label="Curate",  icon="✏️")
-        st.sidebar.page_link("pages/2_move.py",    label="Move",    icon="🚚")
-        st.sidebar.page_link("pages/3_browse.py",  label="Browse",  icon="🔍")
-        st.sidebar.page_link("pages/4_import.py",  label="Import",  icon="📥")
-    else:
-        st.sidebar.markdown("**HPC pipeline**")
-        st.sidebar.page_link("pages/5_hpc_transfer.py", label="HPC Transfer", icon="📦")
-
 def main() -> None:
     # One Database instance per session stored in session_state
     first_load = "db" not in st.session_state
@@ -102,9 +82,7 @@ def main() -> None:
     if first_load:
         _startup(db)
 
-    init_session(db)
-    # _sidebar_identity()
-    _sidebar_pipeline() 
+    init_session(db)   # renders the sidebar (identity + pipeline selector)
 
     updated, skipped = st.session_state.get("_reconcile_result", (0, []))
     if skipped:
@@ -114,8 +92,7 @@ def main() -> None:
             icon="⚠️",
         )
 
-    # Navigation hint — Streamlit renders pages/ automatically
-    st.sidebar.markdown("---")
+    # Navigation hint — links are rendered by auth.session._render_sidebar
     st.sidebar.caption("Navigate using the pages above.")
 
     # Landing page content
@@ -137,6 +114,9 @@ def main() -> None:
     with col3:
         moved = db.list_artifacts(status="moved")
         st.metric("Moved", len(moved))
+
+    if role == Role.ADMIN:
+        st.info("Superuser session — all pages and both pipelines are available.")
 
     if role == Role.READONLY:
         st.info(

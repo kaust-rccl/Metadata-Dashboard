@@ -25,6 +25,15 @@ _KEY_USERNAME = "username"
 _KEY_ROLE     = "role"
 _KEY_DB       = "db"
 
+# Pipeline selector.
+# Streamlit discards widget state when the widget is not re-instantiated on
+# the page being rendered, which is exactly what happens when the user
+# navigates between pages. The radio's own key is therefore treated as
+# scratch state; _KEY_PIPELINE holds the value that survives navigation.
+_KEY_PIPELINE        = "pipeline"
+_KEY_PIPELINE_WIDGET = "pipeline_selector"
+_PIPELINES           = ["HPC-AI", "HPC"]
+
 
 def init_session(db=None) -> None:
     """
@@ -69,6 +78,8 @@ def require_role(*allowed: Role) -> bool:
             st.stop()
     """
     role = current_role()
+    if role == Role.ADMIN:
+        return True
     if role not in allowed:
         st.error(
             f"Access denied. This page requires one of: "
@@ -77,6 +88,22 @@ def require_role(*allowed: Role) -> bool:
         )
         return False
     return True
+
+
+def is_admin() -> bool:
+    """True if the current session belongs to a superuser."""
+    return current_role() == Role.ADMIN
+
+
+def current_pipeline() -> str:
+    """Return the selected data movement pipeline: 'HPC-AI' or 'HPC'."""
+    return st.session_state.get(_KEY_PIPELINE, _PIPELINES[0])
+
+
+def _on_pipeline_change() -> None:
+    """Persist the radio's value into non-widget state before the rerun."""
+    st.session_state[_KEY_PIPELINE] = st.session_state[_KEY_PIPELINE_WIDGET]
+
 
 def _render_sidebar() -> None:
     """Inject sidebar chrome — called from init_session so every page gets it."""
@@ -89,12 +116,24 @@ def _render_sidebar() -> None:
     </style>
     """, unsafe_allow_html=True)
 
-    # pipeline selector
-    pipeline = st.sidebar.radio(
+    # pipeline selector — value persisted across page navigation
+    if _KEY_PIPELINE not in st.session_state:
+        st.session_state[_KEY_PIPELINE] = _PIPELINES[0]
+
+    # Seed the widget from persistent state. On a fresh page the widget key is
+    # gone, so this restores the selection; on a rerun of the same page the
+    # on_change callback has already written the new value here, so this is a
+    # no-op rather than a revert.
+    st.session_state[_KEY_PIPELINE_WIDGET] = st.session_state[_KEY_PIPELINE]
+
+    st.sidebar.radio(
         "Data movement pipeline",
-        ["HPC-AI", "HPC"],
-        key="pipeline_selector",
+        _PIPELINES,
+        key=_KEY_PIPELINE_WIDGET,
+        on_change=_on_pipeline_change,
     )
+    pipeline = st.session_state[_KEY_PIPELINE]
+
     st.sidebar.markdown("---")
 
     if pipeline == "HPC-AI":

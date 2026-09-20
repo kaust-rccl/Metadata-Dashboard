@@ -46,6 +46,15 @@ LDAP_GROUP_CURATOR: str = "k03"
 LDAP_GROUP_MOVER: str   = "k02"
 
 
+# ── superusers ────────────────────────────────────────────────────────────────
+# Usernames listed here resolve to Role.ADMIN regardless of group membership.
+# ADMIN bypasses every require_role() guard and holds the union of the
+# curator and mover permission sets.
+SUPERUSERS: frozenset[str] = frozenset({
+    "x_mohameta",
+})
+
+
 # ── datetime ──────────────────────────────────────────────────────────────────
 
 DATETIME_FMT: str = "%Y-%m-%dT%H:%M:%S%z"
@@ -62,7 +71,8 @@ MANIFEST_NAME: str = "manifest.yml"
 # ── enums ─────────────────────────────────────────────────────────────────────
 
 class Role(str, Enum):
-    """App roles resolved from LDAP group membership."""
+    """App roles resolved from LDAP group membership (or SUPERUSERS)."""
+    ADMIN    = "admin"
     CURATOR  = "curator"
     MOVER    = "mover"
     READONLY = "readonly"
@@ -140,6 +150,11 @@ ALLOWED_TRANSITIONS: dict[tuple[Status, Role], set[Status]] = {
     (Status.STAGED,   Role.MOVER):   {Status.MOVED,    Status.BLOCKED,  Status.REJECTED},
     (Status.BLOCKED,  Role.MOVER):   {Status.MOVED,    Status.REJECTED},
     (Status.REJECTED, Role.MOVER):   {Status.STAGED},
+    # ADMIN — union of curator and mover
+    (Status.STAGED,   Role.ADMIN):   {Status.MOVED,  Status.BLOCKED, Status.REJECTED},
+    (Status.BLOCKED,  Role.ADMIN):   {Status.MOVED,  Status.STAGED,  Status.REJECTED},
+    (Status.REJECTED, Role.ADMIN):   {Status.STAGED},
+    (Status.MOVED,    Role.ADMIN):   {Status.BLOCKED, Status.REJECTED},
 }
 
 

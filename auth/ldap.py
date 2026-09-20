@@ -19,7 +19,7 @@ import getpass
 import logging
 import subprocess
 
-from config import LDAP_GROUP_CURATOR, LDAP_GROUP_MOVER, Role
+from config import LDAP_GROUP_CURATOR, LDAP_GROUP_MOVER, SUPERUSERS, Role
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +54,13 @@ def resolve_role(username: str) -> Role:
     """
     Map a Unix username to an app Role via group membership.
 
-    Priority: curator > mover > readonly
+    Priority: superuser (admin) > curator > mover > readonly
     If a user belongs to both curator and mover groups (shouldn't
     happen in practice) they get curator.
     """
+    if username in SUPERUSERS:
+        return Role.ADMIN
+
     groups = get_user_groups(username)
 
     if LDAP_GROUP_CURATOR in groups:
