@@ -176,6 +176,15 @@ def sync(
             report.errors.append(f"could not read artifacts from DB: {exc}")
             return report
 
+        ids = [r["_rowid"] for r in rows]
+        if len(ids) != len(set(ids)) or None in ids:
+            report.errors.append(
+                "The DB returned the same row more than once (repeated row identifier) — "
+                "this is file corruption; sync made no changes. Run `PRAGMA integrity_check;` "
+                "and rebuild the DB before syncing again (see docs/db_recovery.md)."
+            )
+            return report
+
         _dedupe(db, rows, disk, report, dry_run)
 
         # Add the missing unique index as soon as the duplicates are gone, so
@@ -410,9 +419,12 @@ def _dedupe(
             if (ref, atype, name) not in taken and _placement_problem((ref, atype, name)) is None:
                 new_name = name                      # its own identity is free
             else:
+                # strip an existing _dupN so repeat splits count on (x_dup3),
+                # never stack (x_dup2_dup2)
+                stem = re.sub(rf"{re.escape(DUPLICATE_SUFFIX)}\d+$", "", name) or name
                 n = 2
                 while True:
-                    new_name = f"{name}{DUPLICATE_SUFFIX}{n}"
+                    new_name = f"{stem}{DUPLICATE_SUFFIX}{n}"
                     cand = (ref, atype, new_name)
                     if (new_name not in used.get((ref, atype), set())
                             and _placement_problem(cand) is None

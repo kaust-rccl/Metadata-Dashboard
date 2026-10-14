@@ -40,11 +40,27 @@ def _startup(db: Database) -> None:
     canonical path. YAML files that are not ours are never parsed.
     A failure here must never stop the app from loading.
     """
+    st.session_state["_db_problems"] = db.quick_check()
+
     try:
         report = sync(db, PROJECTS_BASE, actor="SYSTEM")
     except Exception as exc:   # defensive — sync collects per-record errors itself
         report = SyncReport(errors=[f"sync aborted: {exc}"])
     st.session_state["_sync_report"] = report
+
+
+def _sidebar_db_health() -> None:
+    problems = st.session_state.get("_db_problems") or []
+    if problems:
+        st.sidebar.error(
+            "**The tracker database is corrupt** — listings may show rows twice and "
+            "sync is paused. Stop all dashboard/CLI processes and rebuild it "
+            "(docs/db_recovery.md).",
+            icon="🛑",
+        )
+        with st.sidebar.expander("integrity details"):
+            for line in problems[:20]:
+                st.caption(line)
 
 
 def _sidebar_sync_status() -> None:
@@ -121,6 +137,7 @@ def main() -> None:
 
     init_session(db)   # renders the sidebar (identity + pipeline selector)
 
+    _sidebar_db_health()
     _sidebar_sync_status()
 
     # Navigation hint — links are rendered by auth.session._render_sidebar
@@ -135,16 +152,17 @@ def main() -> None:
 
     role = current_role()
     col1, col2, col3 = st.columns(3)
-
-    with col1:
-        db_rows = db.list_artifacts()
-        st.metric("Total artifacts", len(db_rows))
-    with col2:
-        staged = db.list_artifacts(status="staged")
-        st.metric("Staged", len(staged))
-    with col3:
-        moved = db.list_artifacts(status="moved")
-        st.metric("Moved", len(moved))
+    try:
+        all_rows = db.list_artifacts()
+        unique   = {r["_rowid"]: r for r in all_rows}.values()   # corruption-safe
+        with col1:
+            st.metric("Total artifacts", len(unique))
+        with col2:
+            st.metric("Staged", sum(1 for r in unique if r["status"] == "staged"))
+        with col3:
+            st.metric("Moved", sum(1 for r in unique if r["status"] == "moved"))
+    except Exception as exc:
+        st.error(f"Could not read the artifact counts: {exc}. See docs/db_recovery.md.")
 
     if role == Role.ADMIN:
         st.info("Superuser session — all pages and both pipelines are available.")

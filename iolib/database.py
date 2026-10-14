@@ -149,6 +149,12 @@ class Database:
         self._conn: sqlite3.Connection = self._connect()
         self._init_schema()
         self._migrate_schema()
+        # Real-rowid alias per table. A user column named "rowid" (seen on the
+        # shared DB) shadows SQLite's built-in rowid, so `SELECT rowid` returns
+        # that column's values — which can repeat — and `WHERE rowid = ?`
+        # matches every row sharing a value. All rowid SQL goes through these.
+        self._ra = self._real_rowid_alias("artifacts")
+        self._rp = self._real_rowid_alias("projects")
         self.ensure_unique_yml_path()
 
     @property
@@ -194,6 +200,21 @@ class Database:
         else:
             logger.info("%s switched from %s to DELETE journal mode.", self._path, mode)
 
+    def _real_rowid_alias(self, table: str) -> str:
+        """First of _rowid_ / oid / rowid not shadowed by a user column of `table`."""
+        cols = {str(r["name"]).lower()
+                for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for alias in ("_rowid_", "oid", "rowid"):
+            if alias not in cols:
+                if alias != "_rowid_" or "rowid" in cols:
+                    logger.info("%s.%s: using %s as the row identifier (a user column "
+                                "shadows rowid).", self._path.name, table, alias)
+                return alias
+        raise RuntimeError(
+            f"{table} has user columns named _rowid_, oid and rowid; rows cannot be "
+            "addressed individually."
+        )
+
     def _init_schema(self) -> None:
         self._conn.executescript(_DDL)
         self._conn.commit()
@@ -211,6 +232,18 @@ class Database:
         """Additive column migrations not covered by CREATE TABLE IF NOT EXISTS."""
         self._add_columns("artifacts", self._ARTIFACT_COLUMNS_2026_06)
         self._add_columns("projects", self._PROJECT_COLUMNS_2026_10)
+
+    def quick_check(self) -> list[str]:
+        """
+        PRAGMA quick_check — [] if the file is sound, else SQLite's findings.
+        Cheap on a DB this size. Corruption shows up elsewhere as rows that a
+        full scan returns twice while a rowid lookup finds once.
+        """
+        try:
+            res = [str(r[0]) for r in self._conn.execute("PRAGMA quick_check").fetchall()]
+        except sqlite3.DatabaseError as exc:
+            return [f"quick_check could not run: {exc}"]
+        return [] if res == ["ok"] else res
 
     def has_unique_yml_path(self) -> bool:
         """True if artifacts.yml_path is covered by a UNIQUE constraint or index."""
@@ -302,7 +335,7 @@ class Database:
         }
         with self._tx():
             row = self._conn.execute(
-                "SELECT rowid AS _rowid FROM projects WHERE project_id = ? LIMIT 1", (pid,)
+                f"SELECT {self._rp} AS _rowid FROM projects WHERE project_id = ? LIMIT 1", (pid,)
             ).fetchone()
             if row is None:
                 self._conn.execute(
@@ -317,13 +350,13 @@ class Database:
                 )
             else:
                 self._conn.execute(
-                    """UPDATE projects SET
+                    f"""UPDATE projects SET
                          proposal_title   = COALESCE(NULLIF(?, ''), proposal_title),
                          pi_username      = COALESCE(NULLIF(?, ''), pi_username),
                          kaust_project_id = COALESCE(NULLIF(?, ''), kaust_project_id),
                          last_modified    = COALESCE(NULLIF(?, ''), last_modified),
                          last_modified_by = COALESCE(NULLIF(?, ''), last_modified_by)
-                       WHERE rowid = ?""",
+                       WHERE {self._rp} = ?""",
                     (vals["proposal_title"], vals["pi_username"], vals["kaust_project_id"],
                      vals["last_modified"], vals["last_modified_by"], row["_rowid"]),
                 )
@@ -404,7 +437,7 @@ class Database:
         with tx():
             if row_id is None:
                 ids = [r[0] for r in self._conn.execute(
-                    "SELECT rowid AS _rowid FROM artifacts WHERE yml_path = ?", (str(yml_path),)
+                    f"SELECT {self._ra} AS _rowid FROM artifacts WHERE yml_path = ?", (str(yml_path),)
                 ).fetchall()]
                 if len(ids) > 1:
                     raise DuplicateRowsError(
@@ -422,14 +455,14 @@ class Database:
 
             self._conn.execute(
                 f"UPDATE artifacts SET {', '.join(f'{c} = ?' for c in self._MIRROR_COLUMNS)} "
-                "WHERE rowid = ?",
+                f"WHERE {self._ra} = ?",
                 [vals[c] for c in self._MIRROR_COLUMNS] + [row_id],
             )
             return row_id
 
     def get_artifact(self, artifact_name: str, aimcr_reference: str) -> Optional[sqlite3.Row]:
         return self._conn.execute(
-            "SELECT rowid AS _rowid, * FROM artifacts WHERE artifact_name=? AND project_id=?",
+            f"SELECT {self._ra} AS _rowid, * FROM artifacts WHERE artifact_name=? AND project_id=?",
             (artifact_name, aimcr_reference),
         ).fetchone()
 
@@ -441,8 +474,9 @@ class Database:
     ) -> list[sqlite3.Row]:
         """
         Flexible artifact listing with optional filters.
-        Every row carries `_rowid` — the only identifier guaranteed unique
-        on the shared DB (yml_path may repeat; see module docstring).
+        Every row carries `_rowid` — SQLite's real rowid (via the unshadowed
+        alias, see __init__), the only identifier guaranteed unique on the
+        shared DB (yml_path may repeat; see module docstring).
         """
         clauses, params = [], []
         if aimcr_reference:
@@ -456,8 +490,27 @@ class Database:
             params.append(artifact_type)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"SELECT rowid AS _rowid, * FROM artifacts {where} ORDER BY last_modified DESC"
-        return self._conn.execute(sql, params).fetchall()
+        sql = f"SELECT {self._ra} AS _rowid, * FROM artifacts {where} ORDER BY last_modified DESC"
+        try:
+            return self._conn.execute(sql, params).fetchall()
+        except sqlite3.DatabaseError as exc:
+            # A corrupt index ("database disk image is malformed") can fail a
+            # filtered query while the table itself still reads. Retry as a
+            # plain scan that cannot use an index, filtering in Python.
+            logger.error("list_artifacts failed (%s) — retrying without indexes. "
+                         "The DB needs rebuilding: docs/db_recovery.md", exc)
+            rows = self._conn.execute(
+                f"SELECT {self._ra} AS _rowid, * FROM artifacts NOT INDEXED"
+            ).fetchall()
+            want = {"project_id": aimcr_reference, "status": status, "artifact_type": artifact_type}
+            rows = [r for r in rows if all(v is None or v == "" or r[k] == v for k, v in want.items())]
+            return sorted(rows, key=lambda r: r["last_modified"] or "", reverse=True)
+
+    def rowids_at_path(self, yml_path: str) -> list[int]:
+        """Real rowids of every artifact row whose yml_path is `yml_path`."""
+        return [r[0] for r in self._conn.execute(
+            f"SELECT {self._ra} FROM artifacts WHERE yml_path = ?", (str(yml_path),)
+        ).fetchall()]
 
     def find_duplicate_groups(self) -> list[dict]:
         """
@@ -467,14 +520,14 @@ class Database:
         """
         groups: list[dict] = []
         for r in self._conn.execute(
-            "SELECT yml_path, GROUP_CONCAT(rowid) AS ids FROM artifacts "
+            f"SELECT yml_path, GROUP_CONCAT({self._ra}) AS ids FROM artifacts "
             "GROUP BY yml_path HAVING COUNT(*) > 1"
         ):
             groups.append({"reason": "same YML path", "label": r["yml_path"],
                            "rowids": [int(x) for x in r["ids"].split(",")]})
         for r in self._conn.execute(
             "SELECT COALESCE(NULLIF(CAST(aimcr_reference AS TEXT), ''), project_id) AS ref, "
-            "artifact_type, artifact_name, GROUP_CONCAT(rowid) AS ids, "
+            f"artifact_type, artifact_name, GROUP_CONCAT({self._ra}) AS ids, "
             "COUNT(DISTINCT yml_path) AS paths FROM artifacts "
             "GROUP BY ref, artifact_type, artifact_name HAVING COUNT(*) > 1 AND paths > 1"
         ):
@@ -495,14 +548,14 @@ class Database:
         new_s = str(yml_path)
         with self._maintenance_tx():
             old = self._conn.execute(
-                "SELECT yml_path FROM artifacts WHERE rowid = ?", (row_id,)
+                f"SELECT yml_path FROM artifacts WHERE {self._ra} = ?", (row_id,)
             ).fetchone()
             if old is None:
                 raise KeyError(f"artifact rowid {row_id} not found")
             old_s = old["yml_path"]
             self._conn.execute(
                 "UPDATE artifacts SET artifact_name = ?, yml_path = ?, modlog_path = ? "
-                "WHERE rowid = ?",
+                f"WHERE {self._ra} = ?",
                 (artifact_name, new_s, str(modlog_path), row_id),
             )
             others = self._conn.execute(
@@ -519,7 +572,7 @@ class Database:
     ) -> None:
         """Move the single row at old_yml_path to new_yml_path (name unchanged)."""
         rows = self._conn.execute(
-            "SELECT rowid AS _rowid, artifact_name FROM artifacts WHERE yml_path = ?", (old_yml_path,)
+            f"SELECT {self._ra} AS _rowid, artifact_name FROM artifacts WHERE yml_path = ?", (old_yml_path,)
         ).fetchall()
         if len(rows) != 1:
             raise DuplicateRowsError(
@@ -540,12 +593,12 @@ class Database:
         with self._maintenance_tx():
             if row_id is not None:
                 r = self._conn.execute(
-                    "SELECT yml_path FROM artifacts WHERE rowid = ?", (row_id,)
+                    f"SELECT yml_path FROM artifacts WHERE {self._ra} = ?", (row_id,)
                 ).fetchone()
                 if r is None:
                     return 0
                 yml_path = r["yml_path"]
-                n = self._conn.execute("DELETE FROM artifacts WHERE rowid = ?", (row_id,)).rowcount
+                n = self._conn.execute(f"DELETE FROM artifacts WHERE {self._ra} = ?", (row_id,)).rowcount
             else:
                 n = self._conn.execute(
                     "DELETE FROM artifacts WHERE yml_path = ?", (yml_path,)

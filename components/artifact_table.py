@@ -36,6 +36,26 @@ def render_artifact_table(
         st.info("No artifacts found.")
         return None
 
+    # ── corruption: the same physical row returned more than once ────────────
+    if "_rowid" in rows[0].keys():
+        counts = Counter(r["_rowid"] for r in rows)
+        repeated = [rid for rid, n in counts.items() if n > 1]
+        if repeated:
+            st.error(
+                f"**The tracker database is corrupt** — {len(repeated)} row(s) are "
+                "returned more than once by the same query (one physical row, read "
+                "twice). Each is shown once below. Rebuild the DB before editing: "
+                "`docs/db_recovery.md`.",
+                icon="🛑",
+            )
+            seen, unique = set(), []
+            for r in rows:
+                if r["_rowid"] not in seen:
+                    seen.add(r["_rowid"])
+                    unique.append(r)
+            rows = unique
+
+
     # ── filters ───────────────────────────────────────────────────────────────
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
@@ -125,8 +145,10 @@ def render_artifact_table(
         rcols[4].caption(
             (row["last_modified"] or "—")[:19].replace("T", " ")
         )
-        row_id = row["_rowid"] if "_rowid" in row.keys() else f"i{i}"
-        btn_key = f"{key_prefix}_open_{row_id}"
+        # Position + rowid: unique per render even if the DB ever hands back a
+        # repeated identifier (e.g. a user column shadowing rowid).
+        row_id = row["_rowid"] if "_rowid" in row.keys() else "x"
+        btn_key = f"{key_prefix}_open_{i}_{row_id}"
         if rcols[5].button("Open", key=btn_key):
             selected_yml_path = row["yml_path"]
 
