@@ -130,12 +130,47 @@ class Database:
         return self._path
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        # timeout= sets the busy handler before anything else touches the file,
+        # so every statement below waits up to 5 s for a lock instead of
+        # failing immediately with "database is locked".
+        conn = sqlite3.connect(str(self._path), timeout=5.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=DELETE;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA foreign_keys=ON;")
+        self._ensure_delete_journal(conn)
         return conn
+
+    def _ensure_delete_journal(self, conn: sqlite3.Connection) -> None:
+        """
+        Move the DB to DELETE journal mode if it is not there already.
+
+        The mode is persistent in the DB file, so this only has to succeed
+        once. Leaving WAL needs exclusive access: while any other connection
+        (another session, the CLI, sysadmin tooling, a leftover process) has
+        the file open, the switch fails with "database is locked". That is
+        not fatal — the DB keeps working in its current mode, the switch is
+        retried on the next connect, and a warning says why.
+        """
+        mode = "unknown"
+        try:
+            mode = str(conn.execute("PRAGMA journal_mode;").fetchone()[0]).lower()
+            if mode == "delete":
+                return
+            new = str(conn.execute("PRAGMA journal_mode=DELETE;").fetchone()[0]).lower()
+        except sqlite3.OperationalError as exc:
+            logger.warning(
+                "%s is in %s journal mode and could not be switched to DELETE "
+                "(%s) — another connection has it open. Continuing in %s mode; "
+                "the switch is retried on the next start.",
+                self._path, mode, exc, mode,
+            )
+            return
+        if new != "delete":
+            logger.warning(
+                "%s journal mode is still %s after requesting DELETE.", self._path, new
+            )
+        else:
+            logger.info("%s switched from %s to DELETE journal mode.", self._path, mode)
 
     def _init_schema(self) -> None:
         self._conn.executescript(_DDL)
