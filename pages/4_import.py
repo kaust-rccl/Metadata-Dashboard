@@ -10,8 +10,11 @@ Flow:
        Curator  → can fill curation fields, moving fields locked
        Mover    → can fill moving fields, curation fields locked
   4. User fills any gaps, confirms
-  5. App writes to DB, creates modlog sidecar, updates/creates manifest
-  6. Original YML is left untouched — registered as-is
+  5. App writes the record to its canonical path
+     (PROJECTS_BASE/<aimcr>/<type>/<name>.yml), then DB, modlog, manifest
+  6. Original YML is left untouched. If it already IS the canonical file it
+     stays as-is; if any other file occupies the canonical path, the import
+     is refused rather than overwriting it.
 
 Startup reconciliation has been removed. All imports are manual and
 explicit — no surprises on startup.
@@ -39,7 +42,11 @@ from config import (
 )
 from iolib.database import Database
 from iolib.services import ServiceResult
-from iolib.yaml_io import load_yaml, load_modlog, atomic_write, file_lock, load_manifest
+from iolib.sync import mirror_to_db
+from iolib.yaml_io import (
+    atomic_create, atomic_write, classify_artifact_yml, file_lock,
+    load_manifest, load_modlog, load_yaml,
+)
 from models.artifact import ArtifactYML, ChecksumVerification, StatusReasonEntry
 from models.manifest import ManifestEntry, ManifestYML
 from models.modlog import ArtifactModLog, ModLogEntry
@@ -60,7 +67,8 @@ def main() -> None:
     st.title("Import existing YML")
     st.caption(
         "Load a hand-authored YML from disk, fill any missing fields, "
-        "and register it in the tracker. The original file is not modified."
+        "and register it in the tracker. The original file is not modified; "
+        "a normalised copy is written to the artifact's canonical location."
     )
 
     # ── step 1: path input ────────────────────────────────────────────────
@@ -289,7 +297,7 @@ def main() -> None:
         "Import artifact", type="primary",
         key="import_confirm", disabled=confirm_disabled,
     ):
-        result = _do_import(yml, actor, role, db)
+        result = _do_import(yml, actor, role, db, src_path=src_path)
         if result.success:
             st.success(result.message)
             st.balloons()
@@ -327,7 +335,7 @@ def _load_with_warnings(path: Path) -> tuple[dict, list[str]]:
                 key = stripped.split(":")[0].strip()
                 if key and key in keys_seen:
                     warnings.append(
-                        f"Duplicate key **`{key}`** found — last value will be used. "
+                        f"Duplicate key **`{key}`** found — first value will be used. "
                         f"Consider cleaning the source file."
                     )
                 if key:
@@ -502,14 +510,18 @@ def _validate_import(yml: ArtifactYML, role: Role) -> list[str]:
     return errors
 
 
-def _do_import(yml: ArtifactYML, actor: str, role: Role, db: Database) -> ServiceResult:
+def _do_import(
+    yml: ArtifactYML, actor: str, role: Role, db: Database, src_path: str = "",
+) -> ServiceResult:
     """
     Register the imported artifact:
       1. Set last_modified metadata
-      2. Write to DB
-      3. Create modlog sidecar (IMPORTED action)
-      4. Append/update manifest entry
-    Original YML is not touched.
+      2. Write the canonical YML (unless the source already is that file)
+      3. Write to DB
+      4. Create modlog sidecar (IMPORTED action)
+      5. Append/update manifest entry
+    Original YML is not touched, and nothing at the canonical path is
+    ever overwritten.
     """
     from models.manifest import ManifestYML, ManifestEntry
 
@@ -526,27 +538,46 @@ def _do_import(yml: ArtifactYML, actor: str, role: Role, db: Database) -> Servic
     if not yml.moved_by and role in (Role.MOVER, Role.ADMIN):
         yml.moved_by = actor
 
-    # Derive YML path — for import we use the canonical path based on
-    # aimcr_reference and artifact_type so the DB record points correctly.
-    # The original file stays where it is.
+    # Canonical location — this is where the rest of the app (pages, CLI,
+    # services, sync) expects the record. Previously only the DB row was
+    # pointed here and no file was written, leaving a DB-only record.
     yml_p = artifact_yml_path(yml.aimcr_reference, yml.artifact_name, yml.artifact_type)
     ml_p  = modlog_path(yml.aimcr_reference, yml.artifact_name, yml.artifact_type)
 
-    # DB upsert — upsert project first for FK constraint
+    src = Path(src_path) if src_path else None
+    src_is_canonical = False
     try:
-        mp = manifest_path(yml.aimcr_reference)
-        manifest = load_manifest(mp)
-        if manifest is None:
-            manifest = ManifestYML.new(
-                yml.aimcr_reference, yml.proposal_title, yml.pi_username
-            )
-        # aimcr_reference is the authoritative key (see services._sync_db) —
-        # don't trust a possibly-blank/stale project_id from manifest.yml.
-        manifest.project_id = yml.aimcr_reference
-        db.upsert_project(manifest)
-        db.upsert_artifact(yml, yml_p, ml_p)
+        src_is_canonical = bool(src) and yml_p.exists() and src.samefile(yml_p)
+    except OSError:
+        pass
+
+    if not src_is_canonical:
+        if yml_p.exists() or yml_p.is_symlink():
+            data, reason = classify_artifact_yml(yml_p)
+            if data is not None:
+                return ServiceResult.fail([
+                    f"An artifact record already exists at {yml_p}. "
+                    "Edit it from the Curate or Move page instead of re-importing."
+                ])
+            return ServiceResult.fail([
+                f"{yml_p} is occupied by a file that is not an artifact record "
+                f"({reason}). It was not overwritten — move it aside and retry."
+            ])
+        try:
+            atomic_create(yml_p, yml.to_dict())
+        except FileExistsError:
+            return ServiceResult.fail([f"{yml_p} appeared during import; not overwritten."])
+        except OSError as exc:
+            return ServiceResult.fail([f"Failed to write YML to {yml_p}: {exc}"])
+
+    # DB upsert — project row first for the FK constraint
+    try:
+        mirror_to_db(db, yml, yml_p, ml_p)
     except Exception as exc:
-        return ServiceResult.fail([f"DB registration failed: {exc}"])
+        return ServiceResult.fail([
+            f"YML written to {yml_p}, but DB registration failed: {exc}. "
+            "It will be picked up by the next sync."
+        ])
 
     # Modlog sidecar — create with IMPORTED action
     modlog = load_modlog(ml_p) or ArtifactModLog.new(yml, ml_p)

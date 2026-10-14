@@ -78,44 +78,60 @@ def run_checksum_verify(
 
 def list_staged_artifacts(projects_base: Path) -> list[Path]:
     """
-    Return a list of candidate artifact .yml files found under projects_base.
+    Return candidate artifact .yml files under projects_base.
 
-    Only files sitting at the expected depth and inside a recognised type
-    bucket are returned:
+    Only the fixed layout is visited — three levels, never deeper:
 
-        projects_base / 6#### / datasets|models|software / artifact.yml
+        projects_base / <dir> / datasets|models|software / <name>.yml
 
-    Skips:
-      - .modlog.yml sidecars
-      - manifest.yml files
-      - anything inside Metadata_Dashboard/
-      - any .yml not at the layout above (stray configs, env files, PI YAMLs)
+    This replaces a full rglob(), which on Shaheen3 descended into every
+    staged dataset under support_team/ (PROJECTS_BASE == STAGING_BASE) and
+    picked up any .yml it found there.
 
-    This is a structural filter only. Whether a file that passes it actually
-    contains one of our metadata records is decided by
-    models.artifact.is_artifact_yml() at load time.
+    Skips .modlog.yml sidecars, manifest.yml, dotfiles/temp files, and
+    Metadata_Dashboard/. Symlinks ARE returned so the classifier can report
+    them as ignored rather than have them vanish silently.
+
+    This is a structural filter only. Whether a returned file actually holds
+    one of our records is decided by iolib.yaml_io.classify_artifact_yml().
     """
-    from config import ARTIFACT_TYPE_DIR
+    from config import ARTIFACT_TYPE_DIR, MANIFEST_NAME, MODLOG_SUFFIX, YML_SUFFIX
 
-    if not projects_base.exists():
+    if not projects_base.is_dir():
         return []
 
-    type_dirs = set(ARTIFACT_TYPE_DIR.values())
     found: list[Path] = []
+    try:
+        top_level = list(projects_base.iterdir())
+    except OSError:
+        return []
 
-    for p in projects_base.rglob("*.yml"):
-        if p.name.endswith(".modlog.yml") or p.name == "manifest.yml":
-            continue
-        if "Metadata_Dashboard" in p.parts:
+    for proposal in top_level:
+        if proposal.name == "Metadata_Dashboard" or proposal.name.startswith("."):
             continue
         try:
-            rel = p.relative_to(projects_base)
-        except ValueError:
+            if not proposal.is_dir() or proposal.is_symlink():
+                continue
+        except OSError:
             continue
-        # expected: <aimcr_reference>/<type_dir>/<file>.yml
-        if len(rel.parts) != 3 or rel.parts[1] not in type_dirs:
-            continue
-        found.append(p)
+        for subdir in ARTIFACT_TYPE_DIR.values():
+            bucket = proposal / subdir
+            try:
+                if not bucket.is_dir() or bucket.is_symlink():
+                    continue
+                entries = list(bucket.iterdir())
+            except OSError:
+                continue
+            for p in entries:
+                name = p.name
+                if (
+                    not name.endswith(YML_SUFFIX)
+                    or name.endswith(MODLOG_SUFFIX)
+                    or name == MANIFEST_NAME
+                    or name.startswith(".")
+                ):
+                    continue
+                found.append(p)
 
     return sorted(found)
 

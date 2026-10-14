@@ -44,14 +44,17 @@ class ChecksumVerification:
     @classmethod
     def from_dict(cls, d: dict) -> ChecksumVerification:
         verified_date = None
-        if d.get("verified_date"):
+        raw_date = d.get("verified_date")
+        if isinstance(raw_date, datetime):
+            verified_date = raw_date
+        elif raw_date:
             try:
-                verified_date = datetime.fromisoformat(d["verified_date"])
+                verified_date = datetime.fromisoformat(str(raw_date))
             except ValueError:
                 pass
         return cls(
             verified=bool(d.get("verified", False)),
-            verified_by=d.get("verified_by", ""),
+            verified_by=str(d.get("verified_by") or ""),
             verified_date=verified_date,
         )
 
@@ -319,71 +322,91 @@ class ArtifactYML:
 
     @classmethod
     def from_dict(cls, d: dict) -> ArtifactYML:
-        """Deserialize from a dict loaded by ruamel.yaml."""
+        """
+        Deserialize from a dict loaded by ruamel.yaml (or rebuilt from a DB row).
 
-        def _dt(val: str) -> Optional[datetime]:
+        String fields are coerced with str(): unquoted YAML scalars such as
+        65616 or 2.5 load as int/float, and SQLite INTEGER columns come back
+        as int. Without coercion, aimcr_reference=65616 breaks path building.
+        """
+
+        def _s(val, default: str = "") -> str:
+            return default if val is None else str(val)
+
+        def _dt(val) -> Optional[datetime]:
             if not val:
                 return None
+            if isinstance(val, datetime):
+                return val
             try:
-                return datetime.fromisoformat(val)
+                return datetime.fromisoformat(str(val))
             except (ValueError, TypeError):
                 return None
 
+        def _f(val) -> float:
+            try:
+                return float(val) if val not in (None, "") else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
         return cls(
-            artifact_name=d.get("artifact_name", ""),
-            artifact_type=ArtifactType(d.get("artifact_type", "dataset")),
-            artifact_version=d.get("artifact_version", ""),
-            proposal_title=d.get("proposal_title", ""),
-            project_id=d.get("project_id", ""),
-            pi_username=d.get("pi_username", ""),
-            aimcr_reference=d.get("aimcr_reference", ""),
-            tracking_ticket=d.get("tracking_ticket", ""),
-            metadata_creation_date=_dt(d.get("metadata_creation_date", "")),
-            dm_ticket_number=d.get("dm_ticket_number", ""),
-            curated_by=d.get("curated_by", ""),
-            date_staged=_dt(d.get("date_staged", "")),
-            system=d.get("system", "shaheen3"),
-            partition=Partition(d.get("partition", "cpu")),
-            source_path=d.get("source_path", ""),
-            destination_path=d.get("destination_path", ""),
-            checksum_type=ChecksumType(d.get("checksum_type", "sha256")),
+            artifact_name=_s(d.get("artifact_name")),
+            artifact_type=ArtifactType(_s(d.get("artifact_type"), "dataset").strip().lower() or "dataset"),
+            artifact_version=_s(d.get("artifact_version")),
+            proposal_title=_s(d.get("proposal_title")),
+            project_id=_s(d.get("project_id")),
+            pi_username=_s(d.get("pi_username")),
+            aimcr_reference=_s(d.get("aimcr_reference")).strip(),
+            tracking_ticket=_s(d.get("tracking_ticket")),
+            metadata_creation_date=_dt(d.get("metadata_creation_date")),
+            dm_ticket_number=_s(d.get("dm_ticket_number")),
+            curated_by=_s(d.get("curated_by")),
+            date_staged=_dt(d.get("date_staged")),
+            system=_s(d.get("system"), "shaheen3") or "shaheen3",
+            partition=Partition(_s(d.get("partition"), "cpu") or "cpu"),
+            source_path=_s(d.get("source_path")),
+            destination_path=_s(d.get("destination_path")),
+            checksum_type=ChecksumType(_s(d.get("checksum_type"), "sha256") or "sha256"),
             checksum_source=ChecksumSource(
-                d.get("checksum_source", "self-generated")
+                _s(d.get("checksum_source"), "self-generated") or "self-generated"
             ),
-            checksum_filename=d.get("checksum_filename", ""),
-            size_gb=float(d.get("size_gb", 0.0)),
+            checksum_filename=_s(d.get("checksum_filename")),
+            size_gb=_f(d.get("size_gb")),
             checksum_verified_cpup=ChecksumVerification.from_dict(
-                d.get("checksum_verified_cpup", {})
+                d.get("checksum_verified_cpup") or {}
             ),
             reference=bool(d.get("reference", False)),
-            reference_group=d.get("reference_group", ""),
-            curation_notes=d.get("curation_notes", ""),
+            reference_group=_s(d.get("reference_group")),
+            curation_notes=_s(d.get("curation_notes")),
             curation_status_reason=[
                 StatusReasonEntry.from_dict(e)
-                for e in d.get("curation_status_reason", [])
+                for e in (d.get("curation_status_reason") or [])
             ],
-            moved_by=d.get("moved_by", ""),
-            date_moved=_dt(d.get("date_moved", "")),
+            moved_by=_s(d.get("moved_by")),
+            date_moved=_dt(d.get("date_moved")),
             checksum_verified_gpup=ChecksumVerification.from_dict(
-                d.get("checksum_verified_gpup", {})
+                d.get("checksum_verified_gpup") or {}
             ),
-            moving_notes=d.get("moving_notes", ""),
+            moving_notes=_s(d.get("moving_notes")),
             moving_status_reason=[
                 StatusReasonEntry.from_dict(e)
-                for e in d.get("moving_status_reason", [])
+                for e in (d.get("moving_status_reason") or [])
             ],
-            status=Status(d.get("status", "staged")),
-            last_modified=_dt(d.get("last_modified", "")),
-            last_modified_by=d.get("last_modified_by", ""),
+            status=Status(_s(d.get("status"), "staged") or "staged"),
+            last_modified=_dt(d.get("last_modified")),
+            last_modified_by=_s(d.get("last_modified_by")),
         )
 
 
 # ── artifact YML recognition ─────────────────────────────────────────────────
-# The startup sync walks the projects tree and will encounter YAML files that
-# have nothing to do with this tracker (PI configs, conda env files, training
+# The sync walks the projects tree and will encounter YAML files that have
+# nothing to do with this tracker (PI configs, conda env files, training
 # hyperparameters, etc). Without a check those parse into a default-constructed
-# ArtifactYML and show up as blank rows. These helpers decide whether a loaded
-# mapping is one of our metadata records.
+# ArtifactYML and show up as blank rows.
+#
+# This is the second gate. The first, iolib.yaml_io.classify_artifact_yml,
+# rejects files on size and a plain-text key sniff before the YAML parser ever
+# sees them; this function then checks the parsed mapping structurally.
 
 # Every top-level key ArtifactYML.to_dict() emits.
 ARTIFACT_YML_KEYS: frozenset[str] = frozenset({
@@ -442,6 +465,15 @@ def is_artifact_yml(data: object) -> tuple[bool, str]:
         ArtifactType(str(data["artifact_type"]).strip().lower())
     except ValueError:
         return False, f"unrecognised artifact_type: {data['artifact_type']!r}"
+
+    # Nested blocks we emit must have the shape we emit; a foreign file reusing
+    # one of these key names with a different structure is not ours.
+    for key in ("checksum_verified_cpup", "checksum_verified_gpup"):
+        if data.get(key) not in (None, "") and not isinstance(data.get(key), dict):
+            return False, f"{key} is not a mapping"
+    for key in ("curation_status_reason", "moving_status_reason"):
+        if data.get(key) not in (None, "") and not isinstance(data.get(key), list):
+            return False, f"{key} is not a list"
 
     return True, ""
 

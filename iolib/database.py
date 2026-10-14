@@ -97,8 +97,10 @@ CREATE INDEX IF NOT EXISTS idx_modlog_actor
 class Database:
     """
     Wraps a single SQLite connection for the app session.
-    Thread safety: SQLite in WAL mode handles concurrent readers;
-    writes are serialised by the GIL since Streamlit runs in one process.
+
+    Journal mode is DELETE, not WAL: the DB lives on Lustre, where WAL's
+    shared-memory index is not supported. busy_timeout absorbs short lock
+    contention between sessions, the CLI, and the sysadmin tooling.
     """
 
     # Columns added 2026-06 during schema unification with the sysadmin
@@ -123,10 +125,15 @@ class Database:
         self._init_schema()
         self._migrate_schema()
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA journal_mode=DELETE;")
+        conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA foreign_keys=ON;")
         return conn
 
@@ -201,7 +208,12 @@ class Database:
     def upsert_artifact(self, yml, yml_path: Path, modlog_path: Path) -> None:
         """
         Insert or update an artifact row from an ArtifactYML instance.
-        Called after every successful YML write.
+        Called after every successful YML write, and by iolib.sync.
+
+        On conflict every mirrored column is refreshed from the YML (the
+        source of truth). Previously identity, paths, curated_by and
+        date_staged were insert-only, so a curator edit to source_path or
+        destination_path never reached the DB.
 
         checksum_value (sysadmin schema) maps to yml.checksum_filename —
         the dashboard stores the checksum file name, not a raw hash value.
@@ -219,13 +231,22 @@ class Database:
                  size_gb, reference_group)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(yml_path) DO UPDATE SET
+                artifact_name          = excluded.artifact_name,
+                artifact_type          = excluded.artifact_type,
+                artifact_version       = excluded.artifact_version,
+                project_id             = excluded.project_id,
                 status                 = excluded.status,
                 partition              = excluded.partition,
+                curated_by             = excluded.curated_by,
                 moved_by               = excluded.moved_by,
+                date_staged            = excluded.date_staged,
                 date_moved             = excluded.date_moved,
                 checksum_verified_cpup = excluded.checksum_verified_cpup,
                 checksum_verified_gpup = excluded.checksum_verified_gpup,
                 reference              = excluded.reference,
+                source_path            = excluded.source_path,
+                destination_path       = excluded.destination_path,
+                modlog_path            = excluded.modlog_path,
                 last_modified          = excluded.last_modified,
                 last_modified_by       = excluded.last_modified_by,
                 tracking_ticket        = excluded.tracking_ticket,
@@ -343,75 +364,36 @@ class Database:
             params,
         ).fetchall()
 
-    # ── reconciliation ────────────────────────────────────────────────────────
+    # ── sync support ──────────────────────────────────────────────────────────
 
-    def reconcile_from_ymls(
-        self, yml_paths: list[Path]
-    ) -> tuple[int, list[str], list[str]]:
+    def repoint_artifact(
+        self, old_yml_path: str, new_yml_path: Path, new_modlog_path: Path
+    ) -> None:
         """
-        Startup reconciliation pass.
-        Loads each YML and upserts the DB row to catch any drift.
+        Move an artifact row (and its modlog_entries children) to a new
+        yml_path in one transaction. Used by iolib.sync when a DB row and
+        a YML on disk are the same record but disagree on the path.
 
-        Files that are not our artifact metadata (foreign YAML that happens to
-        sit in the projects tree) are recognised and ignored rather than parsed
-        into blank artifacts — see models.artifact.is_artifact_yml.
-
-        Upserts the project row first (forcing project_id to the artifact's
-        own aimcr_reference, not whatever manifest.yml happens to contain) so
-        artifacts whose project row never made it into the DB — e.g. ones
-        skipped earlier by the same FK ordering bug this fixes — actually
-        get healed instead of failing the same FK check again.
-
-        Returns:
-            (updated_count, skipped_paths, ignored_paths)
-            skipped_paths lists files that look like ours but could not be
-            parsed, so the UI can surface them as warnings.
-            ignored_paths lists files that are simply not ours — informational
-            only, never a warning.
+        modlog_entries.yml_path references artifacts(yml_path) without
+        ON UPDATE CASCADE, so the FK check is deferred to commit.
+        Raises sqlite3.IntegrityError if new_yml_path is already taken.
         """
-        from iolib.yaml_io import load_yaml, load_manifest
-        from models.artifact import ArtifactYML, is_artifact_yml
-        from config import manifest_path as mlp_path
-        from config import modlog_path as mlp
-        from models.manifest import ManifestYML
-
-        updated = 0
-        skipped: list[str] = []
-        ignored: list[str] = []
-
-        for yp in yml_paths:
-            try:
-                raw = load_yaml(yp)
-                if not raw:
-                    ignored.append(str(yp))
-                    logger.debug("Reconcile ignored %s: empty file", yp)
-                    continue
-
-                recognised, reason = is_artifact_yml(raw)
-                if not recognised:
-                    ignored.append(str(yp))
-                    logger.info("Reconcile ignored %s: %s", yp, reason)
-                    continue
-
-                yml = ArtifactYML.from_dict(raw)
-
-                mp = mlp_path(yml.aimcr_reference)
-                manifest = load_manifest(mp)
-                if manifest is None:
-                    manifest = ManifestYML.new(
-                        yml.aimcr_reference, yml.proposal_title, yml.pi_username
-                    )
-                manifest.project_id = yml.aimcr_reference
-                self.upsert_project(manifest)
-
-                ml_path = mlp(yml.aimcr_reference, yml.artifact_name, yml.artifact_type)
-                self.upsert_artifact(yml, yp, ml_path)
-                updated += 1
-            except Exception as exc:
-                logger.warning("Reconcile skipped %s: %s", yp, exc)
-                skipped.append(str(yp))
-
-        return updated, skipped, ignored
+        new_s, ml_s = str(new_yml_path), str(new_modlog_path)
+        try:
+            self._conn.execute("BEGIN")
+            self._conn.execute("PRAGMA defer_foreign_keys = ON")
+            self._conn.execute(
+                "UPDATE artifacts SET yml_path = ?, modlog_path = ? WHERE yml_path = ?",
+                (new_s, ml_s, old_yml_path),
+            )
+            self._conn.execute(
+                "UPDATE modlog_entries SET yml_path = ? WHERE yml_path = ?",
+                (new_s, old_yml_path),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def close(self) -> None:
         self._conn.close()

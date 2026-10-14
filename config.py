@@ -1,7 +1,7 @@
 """
 config.py
 ---------
-ingle source of truth for all constants, enums, and path helpers.
+Single source of truth for all constants, enums, and path helpers.
 Nothing in this file does I/O — pure data and pure functions.
 To add a new enum value, add it here and nowhere else.
 """
@@ -66,6 +66,17 @@ DATE_FMT: str     = "%Y-%m-%d"
 YML_SUFFIX:    str = ".yml"
 MODLOG_SUFFIX: str = ".modlog.yml"
 MANIFEST_NAME: str = "manifest.yml"
+
+# ── artifact YML recognition / sync ───────────────────────────────────────────
+
+# Proposal directories under PROJECTS_BASE are named after the AIMCR
+# reference (6####). Sync refuses to create a directory for any reference
+# that does not match — so a malformed DB row can never mkdir an arbitrary
+# name inside the shared support_team tree.
+AIMCR_REFERENCE_PATTERN: str = r"6\d{4,}"
+
+# Our artifact YMLs are a few KB. Anything larger is not read at all.
+MAX_ARTIFACT_YML_BYTES: int = 256 * 1024
 
 
 # ── enums ─────────────────────────────────────────────────────────────────────

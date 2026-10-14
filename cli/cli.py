@@ -9,6 +9,7 @@ HPC-AI pipeline commands (operate on AIMCR artifacts):
   dashboard block <aimcr> <name> <reason>
   dashboard reinstate <aimcr> <name> <reason>
   dashboard edit <aimcr> <name> field=value ...
+  dashboard sync [--dry-run] [--verbose] [--json]
 
 HPC pipeline commands (operate on ticket-driven transfers):
   dashboard hpc list [--status --ticket --json]
@@ -46,6 +47,7 @@ from iolib.services import (
     BlockService, MoveService, MovingUpdateService,
     ReinstateService, ServiceResult,
 )
+from iolib.sync import sync
 from iolib.yaml_io import load_artifact_yml, load_modlog
 from iolib.transfers_db import TransfersDatabase
 from iolib.hpc_transfer_service import HpcTransferService
@@ -322,6 +324,42 @@ def cmd_edit(args: argparse.Namespace) -> None:
         for k, v in updated.items():
             dim(f"  {k}: {v}")
         dim("  changes visible in the UI on next refresh")
+
+
+def cmd_sync(args: argparse.Namespace) -> None:
+    """Two-way YML ↔ DB sync. Exit 1 if anything needs a human."""
+    report = sync(_db(), PROJECTS_BASE, actor=_actor(), dry_run=args.dry_run)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        sys.exit(1 if report.needs_attention else 0)
+
+    if report.locked:
+        warn(report.summary())
+        sys.exit(1)
+
+    def section(title: str, items: list[str], printer) -> None:
+        if not items:
+            return
+        bold(f"{title} ({len(items)})")
+        for i in items:
+            printer(f"  {i}")
+        print()
+
+    if args.dry_run:
+        warn("dry run — nothing written")
+        print()
+    section("YML created from DB",   report.yml_created,  print)
+    section("DB row added from YML", report.db_inserted,  print)
+    section("DB row repointed",      report.db_repointed, print)
+    if args.verbose:
+        section("DB row refreshed",  report.db_refreshed, dim)
+        section("Ignored (not ours)", report.ignored,     dim)
+    section("Conflicts", report.conflicts, warn)
+    section("Errors",    report.errors,    err)
+
+    (warn if report.needs_attention else ok)(report.summary())
+    sys.exit(1 if report.needs_attention else 0)
 
 
 # ── HPC pipeline commands ─────────────────────────────────────────────────────
@@ -616,6 +654,7 @@ HPC-AI pipeline:
   dashboard block 65616 Seed-X-PPO-7B "quota exceeded"
   dashboard reinstate 65616 Seed-X-PPO-7B "resolved"
   dashboard edit 65616 Seed-X-PPO-7B destination_path="/scratch/project/k00123/models/Seed-X-PPO-7B"
+  dashboard sync --dry-run
 
 HPC pipeline:
   dashboard hpc list --status pending
@@ -666,6 +705,14 @@ HPC pipeline:
     p_edit.add_argument("aimcr",          metavar="AIMCR")
     p_edit.add_argument("artifact_name",  metavar="NAME")
     p_edit.add_argument("fields",         metavar="field=value", nargs="+")
+
+    p_sync = sub.add_parser(
+        "sync",
+        help="two-way sync: DB rows ↔ artifact YMLs (non-metadata YMLs are never parsed)",
+    )
+    p_sync.add_argument("--dry-run", action="store_true", help="report only, write nothing")
+    p_sync.add_argument("--verbose", action="store_true", help="also list refreshed rows and ignored files")
+    p_sync.add_argument("--json",    action="store_true")
 
     # ── HPC subcommand ────────────────────────────────────────────────────────
 
@@ -732,6 +779,7 @@ _HPC_AI_DISPATCH = {
     "block":     cmd_block,
     "reinstate": cmd_reinstate,
     "edit":      cmd_edit,
+    "sync":      cmd_sync,
 }
 
 _HPC_DISPATCH = {

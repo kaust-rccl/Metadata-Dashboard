@@ -111,20 +111,8 @@ class _BaseService:
         returned string as a non-fatal warning rather than silently dropping it.
         """
         try:
-            from models.manifest import ManifestYML
-            mp       = manifest_path(yml.aimcr_reference)
-            manifest = load_manifest(mp)
-            if manifest is None:
-                manifest = ManifestYML.new(
-                    yml.aimcr_reference, yml.proposal_title, yml.pi_username
-                )
-            # manifest.yml's project_id is hand-editable and can drift or be
-            # blank; aimcr_reference is the authoritative key used everywhere
-            # else (paths, the artifact row's FK). Force it here so a stale
-            # manifest can never desync the project row from the artifact row.
-            manifest.project_id = yml.aimcr_reference
-            db.upsert_project(manifest)
-            db.upsert_artifact(yml, yml_p, ml_p)
+            from iolib.sync import mirror_to_db
+            mirror_to_db(db, yml, yml_p, ml_p)
             return None
         except Exception as exc:
             logger.warning("DB sync failed for %s: %s", yml.artifact_name, exc)
@@ -139,8 +127,9 @@ class _BaseService:
         if db_warning:
             message += (
                 " Saved correctly to disk, but the dashboard listing may be "
-                f"stale (DB sync failed: {db_warning}). Restart the app to "
-                "self-heal, or contact an admin if this persists."
+                f"stale (DB sync failed: {db_warning}). It will be picked up "
+                "by the next sync (new session or `dashboard sync`); contact "
+                "an admin if this persists."
             )
         return ServiceResult.ok(message)
 

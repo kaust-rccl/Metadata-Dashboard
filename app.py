@@ -5,7 +5,7 @@ Entry point for the Streamlit dashboard.
 
 Responsibilities (and nothing more):
 - Open the shared Database connection once per session
-- Run startup reconciliation to heal any YML↔DB drift
+- Run the two-way YML ↔ DB sync once per session (iolib.sync)
 - Initialise session state (username, role)
 - Render the sidebar identity chip
 - Streamlit handles page routing via pages/ directory
@@ -21,7 +21,7 @@ import streamlit as st
 from auth.session import current_role, current_username, init_session
 from config import PROJECTS_BASE, Role
 from iolib.database import Database
-from iolib.fs import list_staged_artifacts
+from iolib.sync import SyncReport, sync
 
 
 st.set_page_config(
@@ -35,13 +35,44 @@ st.set_page_config(
 def _startup(db: Database) -> None:
     """
     One-time-per-session startup tasks.
-    Currently: reconcile the DB mirror against the YML files on disk so any
-    artifact whose DB upsert previously failed (see services._sync_db) gets
-    picked back up automatically instead of staying invisible in the UI.
+    Currently: two-way sync between artifact YMLs and the DB — YMLs missing
+    from the DB are mirrored in, DB rows with no YML get one written at the
+    canonical path. YAML files that are not ours are never parsed.
+    A failure here must never stop the app from loading.
     """
-    yml_paths = list_staged_artifacts(PROJECTS_BASE)
-    updated, skipped, ignored = db.reconcile_from_ymls(yml_paths)
-    st.session_state["_reconcile_result"] = (updated, skipped, ignored)
+    try:
+        report = sync(db, PROJECTS_BASE, actor="SYSTEM")
+    except Exception as exc:   # defensive — sync collects per-record errors itself
+        report = SyncReport(errors=[f"sync aborted: {exc}"])
+    st.session_state["_sync_report"] = report
+
+
+def _sidebar_sync_status() -> None:
+    report: SyncReport | None = st.session_state.get("_sync_report")
+    if report is None:
+        return
+    if report.locked:
+        st.sidebar.caption("Sync skipped — another session was already syncing.")
+        return
+    if report.yml_created or report.db_inserted:
+        st.sidebar.caption(
+            f"Sync: {len(report.yml_created)} YML(s) recreated from DB, "
+            f"{len(report.db_inserted)} DB record(s) added from YML."
+        )
+    if report.needs_attention:
+        st.sidebar.warning(
+            f"Sync: {len(report.conflicts)} conflict(s), {len(report.errors)} "
+            "error(s) need attention.",
+            icon="⚠️",
+        )
+        with st.sidebar.expander("Sync details"):
+            for line in report.conflicts + report.errors:
+                st.caption(line)
+    if report.ignored:
+        st.sidebar.caption(
+            f"{len(report.ignored)} non-metadata YML file(s) in the projects "
+            "tree were ignored."
+        )
 
 
 def _sidebar_identity() -> None:
@@ -84,20 +115,7 @@ def main() -> None:
 
     init_session(db)   # renders the sidebar (identity + pipeline selector)
 
-    updated, skipped, ignored = st.session_state.get(
-        "_reconcile_result", (0, [], [])
-    )
-    if skipped:
-        st.sidebar.warning(
-            f"{len(skipped)} artifact YML(s) could not be reconciled to the "
-            "DB at startup. Check server logs.",
-            icon="⚠️",
-        )
-    if ignored:
-        st.sidebar.caption(
-            f"{len(ignored)} non-metadata YML file(s) in the projects tree "
-            "were ignored during sync."
-        )
+    _sidebar_sync_status()
 
     # Navigation hint — links are rendered by auth.session._render_sidebar
     st.sidebar.caption("Navigate using the pages above.")

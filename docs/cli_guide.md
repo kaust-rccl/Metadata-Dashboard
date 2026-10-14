@@ -26,6 +26,7 @@ source ~/.bashrc
 | `dashboard block <aimcr> <name> "<reason>"` | Block with reason — curator sees it in the dashboard |
 | `dashboard reinstate <aimcr> <name> "<reason>"` | Reinstate blocked or rejected → `staged` |
 | `dashboard edit <aimcr> <name> field=value` | Edit mover fields: `destination_path`, `project_id`, `moving_notes`, `checksum_verified_gpup` |
+| `dashboard sync` | Two-way sync: DB rows with no YML get one, YMLs with no DB row get one. `--dry-run` reports only; `--verbose` also lists ignored files; `--json`. Exits 1 if anything needs attention |
 
 Every write updates the YML on disk, the database, the modlog (with a diff), and the manifest.
 

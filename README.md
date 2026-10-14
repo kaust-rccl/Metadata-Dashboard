@@ -46,7 +46,8 @@ dashboard/
 │   ├── yaml_io.py          # atomic write, file lock, ruamel.yaml helpers
 │   ├── fs.py               # path checks, size, checksum verification
 │   ├── database.py         # SQLite interface — read-optimised mirror
-│   └── services.py         # one class per lifecycle action
+│   ├── services.py         # one class per lifecycle action
+│   └── sync.py             # two-way YML ↔ DB sync (startup + `dashboard sync`)
 │
 ├── auth/
 │   ├── ldap.py             # Unix group → role resolution
@@ -74,10 +75,36 @@ dashboard/
 
 ```
 ArtifactYML (disk)  ←  canonical
-    ↓ sync on STAGED/MOVED
+    ↓ mirrored on every write
 SQLite DB           ←  read-optimised mirror (dashboard queries)
     ↓ sidecar
 artifact.modlog.yml ←  best-effort audit mirror
     ↓ summary
 manifest.yml        ←  per-project index
 ```
+
+## Sync
+
+`iolib/sync.py` reconciles YMLs and the DB in both directions. It runs once
+per dashboard session and on demand via `dashboard sync [--dry-run]`.
+
+- **YML, no DB row** → row inserted.
+- **DB row, no YML** → YML written at the canonical path
+  `PROJECTS_BASE/<aimcr>/<datasets|models|software>/<name>.yml`, plus a modlog
+  entry and a manifest entry. If the row's stored `yml_path` points at a valid
+  record elsewhere (old Import-page rows), that file is copied; otherwise the
+  record is rebuilt from DB columns and the modlog lists the fields the DB
+  does not hold.
+- **Both, different path** → DB row repointed (modlog_entries follow).
+
+Only `PROJECTS_BASE/*/{datasets,models,software}/*.yml` is visited. A file is
+treated as ours only if it is a regular file (no symlinks), under 256 KB,
+has top-level `artifact_name`, `artifact_type` and `aimcr_reference` keys
+in a plain-text check, and then passes `models.artifact.is_artifact_yml`.
+Anything else is never parsed and is listed as ignored.
+
+Sync never overwrites a file and never guesses. These are reported as
+conflicts for a human: a record sitting somewhere other than where its
+content says; a canonical path occupied by another file; several DB rows
+with one identity; DB rows with invalid enum values, unsafe names, or an
+AIMCR reference not matching `AIMCR_REFERENCE_PATTERN`.
