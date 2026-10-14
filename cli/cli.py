@@ -10,6 +10,7 @@ HPC-AI pipeline commands (operate on AIMCR artifacts):
   dashboard reinstate <aimcr> <name> <reason>
   dashboard edit <aimcr> <name> field=value ...
   dashboard sync [--dry-run] [--verbose] [--json]
+  dashboard delete <aimcr> <name> <reason> [--yes]
 
 HPC pipeline commands (operate on ticket-driven transfers):
   dashboard hpc list [--status --ticket --json]
@@ -44,7 +45,7 @@ from config import (
 )
 from iolib.database import Database
 from iolib.services import (
-    BlockService, MoveService, MovingUpdateService,
+    BlockService, DeleteService, MoveService, MovingUpdateService,
     ReinstateService, ServiceResult,
 )
 from iolib.sync import sync
@@ -352,6 +353,8 @@ def cmd_sync(args: argparse.Namespace) -> None:
     section("YML created from DB",   report.yml_created,  print)
     section("DB row added from YML", report.db_inserted,  print)
     section("DB row repointed",      report.db_repointed, print)
+    section("Duplicates split",      report.duplicates,   warn)
+    section("Interrupted deletes finished", report.deletes_completed, print)
     if args.verbose:
         section("DB row refreshed",  report.db_refreshed, dim)
         section("Ignored (not ours)", report.ignored,     dim)
@@ -360,6 +363,20 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
     (warn if report.needs_attention else ok)(report.summary())
     sys.exit(1 if report.needs_attention else 0)
+
+
+def cmd_delete(args: argparse.Namespace) -> None:
+    """Delete an artifact record (YML, DB rows, manifest entry). Data is untouched."""
+    yml, yp = _resolve_yml(args.aimcr, args.artifact_name)
+    if not args.yes:
+        warn(f"This deletes the record {args.aimcr}/{yml.artifact_type.value}/{yml.artifact_name}")
+        dim(f"  yml: {yp}  (data at source/destination is NOT touched)")
+        if input("  type the artifact name to confirm: ").strip() != yml.artifact_name:
+            err("Not confirmed — nothing deleted.")
+            sys.exit(1)
+    from auth.ldap import resolve_role
+    role = resolve_role(_actor())   # same group → role mapping as the dashboard
+    _print_result(DeleteService().execute(yml, _actor(), role, args.reason, _db()))
 
 
 # ── HPC pipeline commands ─────────────────────────────────────────────────────
@@ -714,6 +731,12 @@ HPC pipeline:
     p_sync.add_argument("--verbose", action="store_true", help="also list refreshed rows and ignored files")
     p_sync.add_argument("--json",    action="store_true")
 
+    p_delete = sub.add_parser("delete", help="delete an HPC-AI artifact record (data untouched)")
+    p_delete.add_argument("aimcr",         metavar="AIMCR")
+    p_delete.add_argument("artifact_name", metavar="NAME")
+    p_delete.add_argument("reason",        metavar="REASON")
+    p_delete.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
     # ── HPC subcommand ────────────────────────────────────────────────────────
 
     p_hpc = sub.add_parser("hpc", help="HPC pipeline (ticket-driven transfer) commands")
@@ -780,6 +803,7 @@ _HPC_AI_DISPATCH = {
     "reinstate": cmd_reinstate,
     "edit":      cmd_edit,
     "sync":      cmd_sync,
+    "delete":    cmd_delete,
 }
 
 _HPC_DISPATCH = {

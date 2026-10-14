@@ -143,9 +143,8 @@ def ensure_artifact_dir(aimcr_reference: str, artifact_type, projects_base: Path
     """
     from config import ARTIFACT_TYPE_DIR
     subdir = ARTIFACT_TYPE_DIR[artifact_type]
-    artifact_dir = projects_base / aimcr_reference / subdir
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    return artifact_dir
+    from iolib.perms import make_dirs
+    return make_dirs(projects_base / aimcr_reference / subdir)   # group k03 rwx + setgid
 
 def extract_artifact_info(source_path: str) -> dict:
     """

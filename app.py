@@ -60,14 +60,20 @@ def _sidebar_sync_status() -> None:
             f"{len(report.db_inserted)} DB record(s) added from YML."
         )
     if report.needs_attention:
+        dup_records = sum(1 for d in report.duplicates if not d.startswith("  "))
         st.sidebar.warning(
-            f"Sync: {len(report.conflicts)} conflict(s), {len(report.errors)} "
+            f"Sync: {dup_records} duplicate group(s) split, "
+            f"{len(report.conflicts)} conflict(s), {len(report.errors)} "
             "error(s) need attention.",
             icon="⚠️",
         )
         with st.sidebar.expander("Sync details"):
-            for line in report.conflicts + report.errors:
+            for line in report.duplicates + report.conflicts + report.errors:
                 st.caption(line)
+    if report.deletes_completed:
+        st.sidebar.caption(
+            f"Sync finished {len(report.deletes_completed)} interrupted delete(s)."
+        )
     if report.ignored:
         st.sidebar.caption(
             f"{len(report.ignored)} non-metadata YML file(s) in the projects "

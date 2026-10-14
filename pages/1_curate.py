@@ -7,6 +7,9 @@ Responsibilities:
 - New artifact form (first save → CurationService)
 - Edit curation_notes on existing staged artifact (CurationUpdateService)
 - Block / reject / reinstate actions (BlockService, RejectService, ReinstateService)
+- Delete a record (DeleteService)
+- Project fields (title, k####, PI) auto-filled from the project profile
+  once the AIMCR reference is known (iolib.projects)
 
 All write operations go through services — no direct yaml_io calls here.
 """
@@ -29,8 +32,9 @@ from config import (
     Role, Status,
 )
 from iolib.database import Database
+from iolib.projects import fill_blanks, get_project_profile
 from iolib.services import (
-    BlockService, CurationService, CurationUpdateService,
+    BlockService, CurationService, CurationUpdateService, DeleteService,
     ReinstateService, RejectService, ServiceResult,
 )
 from iolib.yaml_io import load_artifact_yml, load_modlog
@@ -98,9 +102,34 @@ def _render_new_artifact_form(actor: str, db: Database) -> None:
                     info["af_source_path"] = autofill_path.strip()
                     st.session_state.update(info)
                     found = [k for k in info if not k.startswith("_") and k != "af_source_path"]
+                    found += _load_project_profile(info.get("aimcr_reference", ""), db)
                     st.success(f"Auto-filled: {', '.join(found)}")
             else:
                 st.warning("Enter a source path first.")
+
+    # Project details only — for when the source path does not reveal the
+    # AIMCR reference. Fills title, k#### and PI from earlier records.
+    ref_col, ref_btn_col = st.columns([3, 1])
+    with ref_col:
+        ref_input = st.text_input(
+            "AIMCR reference",
+            value=st.session_state.get("aimcr_reference", ""),
+            placeholder="AIMCR reference (6####) — fills proposal title, project ID and PI",
+            key="af_ref_input",
+            label_visibility="collapsed",
+        )
+    with ref_btn_col:
+        if st.button("Load project details", key="load_profile_btn", use_container_width=True):
+            ref = ref_input.strip()
+            if not ref:
+                st.warning("Enter an AIMCR reference first.")
+            else:
+                st.session_state["aimcr_reference"] = ref
+                filled = _load_project_profile(ref, db)
+                if filled:
+                    st.success(f"Filled from earlier records of {ref}: {', '.join(filled)}")
+                else:
+                    st.info(f"No earlier details on record for {ref} (or the fields are already filled).")
 
     st.divider()
 
@@ -216,6 +245,35 @@ def _render_new_artifact_form(actor: str, db: Database) -> None:
         else:
             for err in result.errors:
                 st.error(err)
+
+def _load_project_profile(aimcr_reference: str, db: Database) -> list[str]:
+    """Fill blank project fields in the new-artifact form. Returns fields filled."""
+    profile = get_project_profile(aimcr_reference, db)
+    return fill_blanks(st.session_state, profile)
+
+
+def _render_delete_section(yml: ArtifactYML, actor: str, role: Role, db: Database) -> None:
+    with st.expander("Delete record", expanded=False):
+        st.caption(
+            "Removes this record — its YML, DB row(s) and manifest entry. The data at "
+            "the source and destination paths is **not** touched, and the modification "
+            "log is kept for audit. Use this for duplicates and records created by mistake."
+        )
+        reason = st.text_input("Reason *", key="del_reason")
+        confirm = st.text_input(
+            f"Type the artifact name to confirm: {yml.artifact_name}", key="del_confirm"
+        )
+        ready = bool(reason.strip()) and confirm.strip() == yml.artifact_name
+        if st.button("Delete record", key="del_apply", type="secondary", disabled=not ready):
+            result = DeleteService().execute(yml, actor, role, reason, db)
+            if result.success:
+                st.session_state.pop("cur_selected_yml", None)
+                st.success(result.message)
+                st.rerun()
+            else:
+                for err in result.errors:
+                    st.error(err)
+
 
 def _render_artifact_detail(
     yml_path: Path, actor: str, role: Role, db: Database
@@ -392,46 +450,6 @@ def _render_artifact_detail(
                 "Curation status history", yml.curation_status_reason
             )
 
-        if cur_saved:
-            from datetime import datetime, timezone
-            cv_date = (
-                datetime.now(tz=timezone.utc)
-                if new_cv_verified and not yml.checksum_verified_cpup.verified_date
-                else yml.checksum_verified_cpup.verified_date
-            )
-            result = CurationUpdateService().execute(
-                yml,
-                actor=actor,
-                updated_fields={
-                "source_path":        new_source,
-                "destination_path":   new_dest,
-                "checksum_type":      ChecksumType(new_ctype),
-                "checksum_source":    ChecksumSource(new_csrc),
-                "checksum_filename":  new_cfn,
-                "size_gb":            float(new_size),
-                "reference":          new_ref,
-                "reference_group":    new_ref_group,
-                "checksum_verified_cpup": ChecksumVerification(
-                    verified=new_cv_verified,
-                    verified_by=new_cv_by,
-                    verified_date=cv_date,
-                ),
-                "curation_notes":     new_notes,
-                "dm_ticket_number":   new_dm,
-            },
-            db=db,
-            )
-            if result.success:
-                st.success(result.message)
-                st.rerun()
-            else:
-                for err in result.errors:
-                    st.error(err)
-
-        if yml.curation_status_reason:
-            render_status_reason_list(
-                "Curation status history", yml.curation_status_reason
-            )
 
     # ── block / reject / reinstate ─────────────────────────────────────────
     if yml.status in (Status.STAGED, Status.BLOCKED, Status.REJECTED):
@@ -488,6 +506,9 @@ def _render_artifact_detail(
                 editable=False, field_key="d_cv_gpup"
             )
             render_text_area("Moving notes", yml.moving_notes, False, "d_mnotes")
+
+    # ── delete ─────────────────────────────────────────────────────────────
+    _render_delete_section(yml, actor, role, db)
 
     # ── modlog ─────────────────────────────────────────────────────────────
     with st.expander("Modification log", expanded=False):

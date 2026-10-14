@@ -3,10 +3,16 @@ components/artifact_table.py
 -----------------------------
 Renders a filterable, sortable artifact listing from DB rows.
 Returns the yml_path of the selected artifact, or None.
+
+Rows are keyed by their DB rowid, never by yml_path: on the shared DB two
+rows can share a yml_path, which made Streamlit raise
+StreamlitDuplicateElementKey. Duplicates are flagged instead (⚠ marker and
+a warning above the table) until sync splits them or one is deleted.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Optional
 
 import streamlit as st
@@ -71,6 +77,30 @@ def render_artifact_table(
         st.info("No artifacts match the current filters.")
         return None
 
+    # ── duplicate alert ───────────────────────────────────────────────────────
+    def _ident(r) -> tuple:
+        ref = r["aimcr_reference"] if "aimcr_reference" in r.keys() else None
+        ref = str(ref) if ref not in (None, "") else str(r["project_id"] or "")
+        return (ref, r["artifact_type"], r["artifact_name"])
+
+    path_counts  = Counter(str(r["yml_path"]) for r in rows)
+    ident_counts = Counter(_ident(r) for r in rows)
+
+    def _is_dup(r) -> bool:
+        return path_counts[str(r["yml_path"])] > 1 or ident_counts[_ident(r)] > 1
+
+    dup_rows = [r for r in rows if _is_dup(r)]
+    if dup_rows:
+        names = sorted({f"{_ident(r)[0]}/{r['artifact_type']}/{r['artifact_name']}" for r in dup_rows})
+        st.warning(
+            f"**{len(dup_rows)} duplicate DB records** ({len(names)} artifact(s)): "
+            + ", ".join(f"`{n}`" for n in names[:8])
+            + (" …" if len(names) > 8 else "")
+            + "  \nThe next sync gives each its own name (`_dup2`, …). Review them "
+              "and delete the ones that are true duplicates.",
+            icon="⚠️",
+        )
+
     # ── table header ──────────────────────────────────────────────────────────
     hcols = st.columns([3, 1, 1, 1, 2, 1])
     headers = ["Name", "Type", "Version", "Status", "Last modified", ""]
@@ -82,9 +112,10 @@ def render_artifact_table(
     # ── rows ──────────────────────────────────────────────────────────────────
     selected_yml_path: Optional[str] = None
 
-    for row in filtered:
+    for i, row in enumerate(filtered):
         rcols = st.columns([3, 1, 1, 1, 2, 1])
-        rcols[0].markdown(f"`{row['artifact_name']}`")
+        marker = " ⚠️" if _is_dup(row) else ""
+        rcols[0].markdown(f"`{row['artifact_name']}`{marker}")
         rcols[1].caption(row["artifact_type"])
         rcols[2].caption(row["artifact_version"] or "—")
         rcols[3].markdown(
@@ -94,7 +125,8 @@ def render_artifact_table(
         rcols[4].caption(
             (row["last_modified"] or "—")[:19].replace("T", " ")
         )
-        btn_key = f"{key_prefix}_open_{row['yml_path']}"
+        row_id = row["_rowid"] if "_rowid" in row.keys() else f"i{i}"
+        btn_key = f"{key_prefix}_open_{row_id}"
         if rcols[5].button("Open", key=btn_key):
             selected_yml_path = row["yml_path"]
 

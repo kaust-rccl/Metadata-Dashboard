@@ -18,6 +18,7 @@ _ACTION_COLORS = {
     Action.BLOCKED:  "#BA7517",
     Action.REJECTED: "#A32D2D",
     Action.UPDATED:  "#5F5E5A",
+    Action.DELETED:  "#7A1F1F",
 }
 
 

@@ -24,14 +24,14 @@ def workspace_dir(ticket: str, name: str) -> Path:
     """
     safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", f"{ticket}_{name}")
     d = STAGING_BASE / "workspace" / safe
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from iolib.perms import make_dirs
+    return make_dirs(d)   # group k03 rwx + setgid
 
 
 def logs_dir(workspace: Path) -> Path:
     d = workspace / "logs"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from iolib.perms import make_dirs
+    return make_dirs(d)
 
 
 def write_script(workspace: Path, filename: str, content: str) -> Path:

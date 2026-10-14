@@ -46,6 +46,13 @@ LDAP_GROUP_CURATOR: str = "k03"
 LDAP_GROUP_MOVER: str   = "k02"
 
 
+# ── shared file ownership ─────────────────────────────────────────────────────
+# Every YML, modlog, manifest and lock file the app creates is given this
+# group with rwx, and every directory it creates gets group rwx + setgid so
+# anything created inside later inherits the group (see iolib/perms.py).
+FILE_GROUP: str = "k03"
+
+
 # ── superusers ────────────────────────────────────────────────────────────────
 # Usernames listed here resolve to Role.ADMIN regardless of group membership.
 # ADMIN bypasses every require_role() guard and holds the union of the
@@ -74,6 +81,10 @@ MANIFEST_NAME: str = "manifest.yml"
 # that does not match — so a malformed DB row can never mkdir an arbitrary
 # name inside the shared support_team tree.
 AIMCR_REFERENCE_PATTERN: str = r"6\d{4,}"
+
+# Suffix sync gives to a DB row whose (aimcr_reference, type, name) collides
+# with another record: <name>_dup2, <name>_dup3, ...
+DUPLICATE_SUFFIX: str = "_dup"
 
 # Our artifact YMLs are a few KB. Anything larger is not read at all.
 MAX_ARTIFACT_YML_BYTES: int = 256 * 1024
@@ -138,6 +149,7 @@ class Action(str, Enum):
     BLOCKED  = "blocked"
     REJECTED = "rejected"
     UPDATED  = "updated"
+    DELETED  = "deleted"   # record removed via DeleteService; sync honours it
 
 
 class ChecksumType(str, Enum):

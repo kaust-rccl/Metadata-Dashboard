@@ -115,6 +115,14 @@ def main() -> None:
 
     yml = _raw_to_yml(raw)
 
+    # Project fields missing from the source file are taken from earlier
+    # records of the same proposal (iolib.projects) — only blanks are filled.
+    from iolib.projects import get_project_profile
+    _filled = [f for f, v in get_project_profile(yml.aimcr_reference, db).items()
+               if not str(getattr(yml, f, "") or "").strip() and setattr(yml, f, v) is None]
+    if _filled:
+        st.info(f"Filled from earlier records of {yml.aimcr_reference}: {', '.join(_filled)}")
+
     # ── identity ──────────────────────────────────────────────────────────
     section_header("Identity")
     c1, c2, c3 = st.columns(3)

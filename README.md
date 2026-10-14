@@ -47,7 +47,9 @@ dashboard/
 │   ├── fs.py               # path checks, size, checksum verification
 │   ├── database.py         # SQLite interface — read-optimised mirror
 │   ├── services.py         # one class per lifecycle action
-│   └── sync.py             # two-way YML ↔ DB sync (startup + `dashboard sync`)
+│   ├── sync.py             # two-way YML ↔ DB sync (startup + `dashboard sync`)
+│   ├── projects.py         # project profile lookup for auto-fill
+│   └── perms.py            # group k03 rwx on every YML / lock / dir created
 │
 ├── auth/
 │   ├── ldap.py             # Unix group → role resolution
@@ -108,3 +110,40 @@ conflicts for a human: a record sitting somewhere other than where its
 content says; a canonical path occupied by another file; several DB rows
 with one identity; DB rows with invalid enum values, unsafe names, or an
 AIMCR reference not matching `AIMCR_REFERENCE_PATTERN`.
+
+
+### Duplicates
+
+Several DB rows sharing a `yml_path` or an (AIMCR reference, type, name) are
+flagged in every artifact table (⚠ and a warning). Sync splits them: one row
+keeps the record, every other row gets its own name — `<name>_dup2`,
+`_dup3`, … — and its own YML, and is listed under "Duplicates split" for
+review. Delete the ones that were true duplicates. Once no `yml_path` is
+shared, sync adds the missing unique index on `artifacts.yml_path`, after
+which the DB itself refuses new duplicates.
+
+## Deleting a record
+
+Curate page → artifact → **Delete record** (curator / admin; reason and the
+artifact name required), or `dashboard delete <aimcr> <name> "<reason>"`.
+Removes the YML, the DB row(s) and the manifest entry. The data at the
+source/destination paths is never touched and the modlog is kept, ending in
+a `deleted` entry — sync never recreates a record whose modlog ends that way,
+and finishes a delete that was interrupted.
+
+## Project profile (auto-fill)
+
+Proposal title, KAUST project ID (k####) and PI are stored per AIMCR
+reference — in `manifest.yml` (`kaust_project_id`) and the `projects` table —
+every time an artifact is saved. On the Curate page they fill in as soon as
+the AIMCR reference is known (from the source path, or typed into
+"Load project details"); the Import page fills them where the source file
+has blanks. Only empty fields are ever filled. Proposals staged before this
+change are covered too: the newest artifact YML of the proposal is used.
+
+## File permissions
+
+Every YML, modlog, manifest and lock file the app creates gets group `k03`
+(`FILE_GROUP` in `config.py`) and `u+rwx,g+rwx`; every directory it creates
+gets the same plus setgid, so files created inside later inherit the group.
+Bits are only added. Existing files are fixed when they are next rewritten.

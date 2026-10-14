@@ -56,11 +56,13 @@ def _reader():
 # ── atomic write ──────────────────────────────────────────────────────────────
 
 def _atomic_write(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from iolib.perms import apply_group_rwx, make_dirs
+    make_dirs(path.parent)
     tmp = path.with_suffix(path.suffix + ".tmp")
     y = _writer()
     with tmp.open("w", encoding="utf-8") as fh:
         y.dump(data, fh)
+    apply_group_rwx(tmp, directory=False)   # group k03 rwx before it appears
     tmp.replace(path)
 
 

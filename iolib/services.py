@@ -137,8 +137,10 @@ class _BaseService:
         self, yml: ArtifactYML, yml_p: Path, append: bool
     ) -> None:
         """
-        Load manifest, append or update the artifact entry, write atomically.
-        append=True for first save (curator), False for updates (mover).
+        Load manifest, add or update the artifact entry, absorb the record's
+        project fields into the project profile, write atomically.
+        `append` is kept for callers; a missing entry is always added and an
+        existing one always updated, so the manifest self-heals.
         """
         mp = manifest_path(yml.aimcr_reference)
 
@@ -148,16 +150,22 @@ class _BaseService:
                 manifest = ManifestYML.new(
                     yml.aimcr_reference, yml.proposal_title, yml.pi_username
                 )
+            manifest.absorb_project_fields(yml)
             entry = ManifestEntry.from_artifact_yml(yml, str(yml_p))
-            if append:
-                try:
-                    manifest.append_artifact(entry)
-                except ValueError:
-                    # already exists — treat as update
-                    manifest.update_artifact(yml.artifact_name, **vars(entry))
-            else:
+            if manifest.find_by_name(yml.artifact_name):
                 manifest.update_artifact(yml.artifact_name, **vars(entry))
+            else:
+                manifest.append_artifact(entry)
             atomic_write(mp, manifest.to_dict())
+
+    def _remove_from_manifest(self, aimcr_reference: str, name: str, actor: str) -> None:
+        mp = manifest_path(aimcr_reference)
+        if not mp.exists():
+            return
+        with file_lock(mp):
+            manifest = load_manifest(mp)
+            if manifest is not None and manifest.remove_artifact(name, actor):
+                atomic_write(mp, manifest.to_dict())
 
 
 # ── CurationService ───────────────────────────────────────────────────────────
@@ -202,7 +210,15 @@ class CurationUpdateService(_BaseService):
     """
     Handles curator edits to any curation field after first save.
     Computes a diff against the current on-disk YML and logs what changed.
+
+    If the edit changes the record's identity (artifact_name, artifact_type
+    or aimcr_reference) the record is relocated to its new canonical path:
+    new YML written, old YML removed, modlog sidecar moved, DB row repointed,
+    manifest entry moved. Previously the new content was written into the
+    old file and the manifest update raised, leaving a misplaced record.
     """
+
+    _IDENTITY = ("artifact_name", "artifact_type", "aimcr_reference")
 
     def execute(
         self,
@@ -212,28 +228,107 @@ class CurationUpdateService(_BaseService):
         db,
     ) -> ServiceResult:
 
-        yml_p, ml_p = self._paths(yml)
-        before = load_artifact_yml(yml_p)
+        old_p, old_ml = self._paths(yml)
+        before = load_artifact_yml(old_p)
+        old_ident = tuple(getattr(yml, f) for f in self._IDENTITY)
 
         for field, value in updated_fields.items():
-            if hasattr(yml, field):
-                setattr(yml, field, value)
-            else:
+            if not hasattr(yml, field):
                 return ServiceResult.fail([f"Unknown field: '{field}'"])
+            if isinstance(value, str):
+                value = value.strip()
+            setattr(yml, field, value)
 
         self._touch(yml, actor)
+        note = self._diff_note(before, yml, set(updated_fields.keys()))
+
+        if tuple(getattr(yml, f) for f in self._IDENTITY) != old_ident:
+            return self._relocate(yml, old_ident, old_p, old_ml, actor, note, db)
 
         try:
-            save_artifact_yml(yml_p, yml)
+            save_artifact_yml(old_p, yml)
         except OSError as exc:
             return ServiceResult.fail([f"Failed to write YML: {exc}"])
 
-        note = self._diff_note(before, yml, set(updated_fields.keys()))
-        db_warning = self._sync_db(db, yml, yml_p, ml_p)
-        self._write_modlog(yml, actor, Role.CURATOR, Action.UPDATED, ml_p, note=note)
-        self._update_manifest(yml, yml_p, append=False)
+        db_warning = self._sync_db(db, yml, old_p, old_ml)
+        self._write_modlog(yml, actor, Role.CURATOR, Action.UPDATED, old_ml, note=note)
+        self._update_manifest(yml, old_p, append=False)
 
         return self._ok(f"Artifact updated. Changes: {note}", db_warning)
+
+    def _relocate(self, yml, old_ident, old_p, old_ml, actor, note, db) -> ServiceResult:
+        import os
+        from iolib.sync import _placement_problem
+        from iolib.yaml_io import atomic_create
+
+        problem = _placement_problem((yml.aimcr_reference, yml.artifact_type.value, yml.artifact_name))
+        if problem:
+            return ServiceResult.fail([f"Cannot rename: {problem}."])
+        new_p, new_ml = self._paths(yml)
+        if new_p.exists() or new_p.is_symlink():
+            return ServiceResult.fail([
+                f"Cannot rename: {new_p} already exists. Pick another name, or "
+                "delete the other record first."
+            ])
+
+        try:
+            atomic_create(new_p, yml.to_dict())
+        except (OSError, FileExistsError) as exc:
+            return ServiceResult.fail([f"Failed to write YML at {new_p}: {exc}"])
+
+        old_label = f"{old_ident[2]}/{getattr(old_ident[1], 'value', old_ident[1])}/{old_ident[0]}"
+        rename_note = f"relocated from {old_label}; {note}"
+
+        # DB first, while the old YML still exists: if this fails the rename
+        # is rolled back. (Removing the old YML first would let the next sync
+        # rebuild the old record from its orphaned DB row.)
+        try:
+            rows = db._conn.execute(
+                "SELECT rowid AS _rowid FROM artifacts WHERE yml_path = ?", (str(old_p),)
+            ).fetchall()
+            from iolib.sync import mirror_to_db
+            if len(rows) > 1:
+                raise RuntimeError(
+                    f"{len(rows)} DB rows share {old_p}; run sync to split them first"
+                )
+            if rows:
+                db.relocate_artifact(rows[0]["_rowid"], yml.artifact_name, new_p, new_ml)
+                mirror_to_db(db, yml, new_p, new_ml, row_id=rows[0]["_rowid"])
+            else:
+                mirror_to_db(db, yml, new_p, new_ml)
+        except Exception as exc:
+            try:
+                new_p.unlink()
+            except OSError:
+                pass
+            return ServiceResult.fail([f"Rename rolled back — DB could not be updated: {exc}"])
+
+        warnings: list[str] = []
+        try:
+            old_p.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            warnings.append(f"old YML {old_p} could not be removed ({exc})")
+
+        # move the modlog sidecar so history follows the record
+        if old_ml.exists() and not new_ml.exists():
+            try:
+                os.replace(old_ml, new_ml)
+            except OSError as exc:
+                warnings.append(f"modlog not moved ({exc})")
+
+        self._write_modlog(yml, actor, Role.CURATOR, Action.UPDATED, new_ml, note=rename_note)
+        try:
+            self._remove_from_manifest(old_ident[2], old_ident[0], actor)
+            self._update_manifest(yml, new_p, append=True)
+        except Exception as exc:
+            warnings.append(f"manifest not updated ({exc})")
+
+        msg = f"Artifact renamed to '{yml.artifact_name}' and moved to {new_p}. Changes: {note}"
+        if warnings:
+            msg += " Warnings: " + "; ".join(warnings) + "."
+        return ServiceResult.ok(msg)
 
 
 # ── BlockService ──────────────────────────────────────────────────────────────
@@ -424,3 +519,66 @@ class MovingUpdateService(_BaseService):
         self._update_manifest(yml, yml_p, append=False)
 
         return ServiceResult.ok(f"Moving fields updated. Changes: {note}")
+
+
+# ── DeleteService ─────────────────────────────────────────────────────────────
+
+class DeleteService(_BaseService):
+    """
+    Deletes an artifact RECORD — the YML, its DB row(s) and its manifest
+    entry. The artifact data itself (source/destination paths) is never
+    touched. The modlog sidecar is kept as the audit trail.
+
+    Order matters, because sync recreates whichever half is missing:
+      1. modlog gets a DELETED entry first — sync treats a record whose
+         modlog ends in DELETED as retired and never recreates it
+      2. DB row(s) removed — on failure the marker is countermanded with an
+         UPDATED entry, so nothing is left half-deleted
+      3. YML removed
+      4. manifest entry removed
+    """
+
+    ALLOWED_ROLES = (Role.CURATOR, Role.ADMIN)
+
+    def execute(
+        self, yml: ArtifactYML, actor: str, role: Role, reason: str, db,
+    ) -> ServiceResult:
+        if role not in self.ALLOWED_ROLES:
+            return ServiceResult.fail([f"Role '{role.value}' cannot delete records."])
+        if not reason.strip():
+            return ServiceResult.fail(["A reason is required to delete a record."])
+
+        yml_p, ml_p = self._paths(yml)
+        label = f"{yml.aimcr_reference}/{yml.artifact_type.value}/{yml.artifact_name}"
+
+        self._write_modlog(yml, actor, role, Action.DELETED, ml_p,
+                           note=f"record deleted: {reason.strip()}")
+
+        try:
+            n = db.delete_artifact_rows(yml_path=str(yml_p))
+        except Exception as exc:
+            self._write_modlog(yml, actor, role, Action.UPDATED, ml_p,
+                               note=f"delete aborted — DB error: {exc}")
+            return ServiceResult.fail([f"Delete aborted, nothing removed: DB error: {exc}"])
+
+        try:
+            yml_p.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            return ServiceResult.fail([
+                f"DB row(s) removed but {yml_p} could not be deleted ({exc}). "
+                "Remove it by hand; sync will not restore it (deleted marker)."
+            ])
+
+        try:
+            self._remove_from_manifest(yml.aimcr_reference, yml.artifact_name, actor)
+        except Exception as exc:
+            return ServiceResult.ok(
+                f"Record {label} deleted ({n} DB row(s)); manifest entry could not be removed: {exc}"
+            )
+
+        return ServiceResult.ok(
+            f"Record {label} deleted ({n} DB row(s)). Data at the source and "
+            "destination paths was not touched; the modlog is kept for audit."
+        )

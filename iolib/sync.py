@@ -26,7 +26,19 @@ Safety rules — sync never guesses and never destroys:
     that does not match AIMCR_REFERENCE_PATTERN are reported, not written.
   - Several DB rows sharing one identity is a conflict; none are touched.
 
-Everything that needs a human lands in SyncReport.conflicts or .errors.
+Duplicates (several DB rows sharing a yml_path or an identity) are resolved
+before anything else: one row keeps the record, every other row is given
+its own identity — its own name if that is free, otherwise <name>_dup2,
+_dup3, ... — and gets its own YML. Each is listed in SyncReport.duplicates
+so it can be reviewed and, if it was a true duplicate, deleted. Once no
+duplicate yml_path remains, the missing unique index is added.
+
+Deleted records: a record whose modlog ends in DELETED (DeleteService) is
+never recreated. A DB row left behind by an interrupted delete is removed;
+a YML left behind is reported.
+
+Everything that needs a human lands in SyncReport.conflicts, .duplicates
+or .errors.
 
 Concurrency: a non-blocking flock next to the DB means only one sync runs
 at a time. A session that loses the race skips its sync (report.locked).
@@ -45,11 +57,12 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from config import (
-    AIMCR_REFERENCE_PATTERN, ARTIFACT_TYPE_DIR, MODLOG_SUFFIX, PROJECTS_BASE,
+    AIMCR_REFERENCE_PATTERN, ARTIFACT_TYPE_DIR, DUPLICATE_SUFFIX, MODLOG_SUFFIX, PROJECTS_BASE,
     Action, ArtifactType, ChecksumSource, ChecksumType, Partition, Role, Status,
     artifact_yml_path, manifest_path, modlog_path,
 )
 from iolib.fs import list_staged_artifacts
+from iolib.perms import open_lock_file
 from iolib.yaml_io import (
     atomic_create, atomic_write, classify_artifact_yml, file_lock,
     load_manifest, load_modlog,
@@ -84,13 +97,15 @@ class SyncReport:
     db_refreshed: list[str] = field(default_factory=list)  # YML → existing DB row
     db_repointed: list[str] = field(default_factory=list)  # row's yml_path corrected
     yml_created: list[str] = field(default_factory=list)   # DB row → new YML
+    duplicates: list[str] = field(default_factory=list)    # duplicate rows split apart
+    deletes_completed: list[str] = field(default_factory=list)  # interrupted deletes finished
     ignored: list[str] = field(default_factory=list)       # not ours — informational
     conflicts: list[str] = field(default_factory=list)     # needs a human
     errors: list[str] = field(default_factory=list)        # unexpected failures
 
     @property
     def needs_attention(self) -> bool:
-        return bool(self.conflicts or self.errors)
+        return bool(self.conflicts or self.errors or self.duplicates)
 
     def summary(self) -> str:
         if self.locked:
@@ -101,6 +116,7 @@ class SyncReport:
             f"{len(self.db_inserted)} DB row(s) added from YML, "
             f"{len(self.db_repointed)} repointed, "
             f"{len(self.db_refreshed)} refreshed, "
+            f"{len(self.duplicates)} duplicate(s) split, "
             f"{len(self.conflicts)} conflict(s), {len(self.errors)} error(s), "
             f"{len(self.ignored)} non-metadata file(s) ignored."
         )
@@ -113,7 +129,7 @@ class SyncReport:
 
 # ── public entry points ───────────────────────────────────────────────────────
 
-def mirror_to_db(db, yml: ArtifactYML, yml_p: Path, ml_p: Path) -> None:
+def mirror_to_db(db, yml: ArtifactYML, yml_p: Path, ml_p: Path, row_id: Optional[int] = None) -> int:
     """
     Upsert the project row (FK parent) then the artifact row from a YML.
     Raises on failure — callers decide whether that is fatal.
@@ -128,8 +144,9 @@ def mirror_to_db(db, yml: ArtifactYML, yml_p: Path, ml_p: Path) -> None:
             yml.aimcr_reference, yml.proposal_title, yml.pi_username
         )
     manifest.project_id = yml.aimcr_reference
+    manifest.absorb_project_fields(yml)        # project profile → projects row
     db.upsert_project(manifest)
-    db.upsert_artifact(yml, yml_p, ml_p)
+    return db.upsert_artifact(yml, yml_p, ml_p, row_id=row_id)
 
 
 def sync(
@@ -154,10 +171,19 @@ def sync(
         disk, blocked = _scan_disk(projects_base, report)
 
         try:
-            rows = list(db.list_artifacts())
+            rows = [dict(r) for r in db.list_artifacts()]
         except sqlite3.Error as exc:
             report.errors.append(f"could not read artifacts from DB: {exc}")
             return report
+
+        _dedupe(db, rows, disk, report, dry_run)
+
+        # Add the missing unique index as soon as the duplicates are gone, so
+        # the rest of the run (and every later write) uses a sound schema.
+        if not dry_run:
+            ok, msg = db.ensure_unique_yml_path()
+            if not ok and msg:
+                report.conflicts.append(f"DB schema — {msg}")
 
         claimed = _disk_to_db(db, disk, rows, report, dry_run)
         _db_to_disk(db, rows, claimed, blocked, report, actor, dry_run)
@@ -177,7 +203,7 @@ def _sync_lock(base: Path, skip: bool) -> Iterator[bool]:
     lock_path = base.with_suffix(".lock")
     fd = None
     try:
-        fd = lock_path.open("w")
+        fd = open_lock_file(lock_path)   # group k03 rwx, shared across users
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         if fd:
@@ -210,15 +236,15 @@ def _label(key: Key) -> str:
     return "/".join(key)
 
 
-def _row_ref(row: sqlite3.Row) -> str:
+def _row_ref(row: dict) -> str:
     """AIMCR reference for a DB row: the aimcr_reference column if set, else project_id."""
-    ref = row["aimcr_reference"]
+    ref = row.get("aimcr_reference")
     if ref is None or str(ref).strip() == "":
-        ref = row["project_id"]
+        ref = row.get("project_id")
     return "" if ref is None else str(ref).strip()
 
 
-def _row_key(row: sqlite3.Row) -> Key:
+def _row_key(row: dict) -> Key:
     return (
         _row_ref(row),
         str(row["artifact_type"] or "").strip().lower(),
@@ -245,6 +271,16 @@ def _placement_problem(key: Key) -> Optional[str]:
     ):
         return f"artifact_name {name!r} is not usable as a file name"
     return None
+
+
+def _deleted_marker(key: Key) -> bool:
+    """True if the record's modlog sidecar ends in a DELETED entry."""
+    ref, atype, name = key
+    try:
+        ml = load_modlog(modlog_path(ref, name, ArtifactType(atype)))
+    except Exception:
+        return False
+    return bool(ml and ml.entries and ml.entries[-1].action == Action.DELETED)
 
 
 # ── pass 1: scan disk ─────────────────────────────────────────────────────────
@@ -285,9 +321,135 @@ def _scan_disk(
             blocked.add(key)
             continue
 
+        if _deleted_marker(key):
+            report.conflicts.append(
+                f"{p} — this record was deleted (modlog) but its YML is still on "
+                "disk; not synced. Remove the file, or re-stage the artifact."
+            )
+            blocked.add(key)
+            continue
+
         disk[key] = (p, yml)
 
     return disk, blocked
+
+
+# ── pass 1b: split duplicate DB rows ──────────────────────────────────────────
+
+def _dedupe(
+    db,
+    rows: list[dict],
+    disk: dict[Key, tuple[Path, ArtifactYML]],
+    report: SyncReport,
+    dry_run: bool,
+) -> None:
+    """
+    Rows that share a yml_path or an identity are grouped (transitively).
+    In each group one row is kept as-is; every other row is moved to its
+    own identity and canonical path, so later passes treat it as a record
+    of its own (and write it a YML from its DB columns).
+
+    Keeper preference: the row whose identity AND path match a YML on disk,
+    then a row whose identity matches a YML on disk, then the lowest rowid.
+    A non-keeper keeps its name if no other record holds that identity,
+    otherwise gets <name>_dup2, _dup3, ... (first free). Mutates `rows`
+    in place so the later passes see the new identities, also in dry runs.
+    """
+    parent = {r["_rowid"]: r["_rowid"] for r in rows}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    first_by_key: dict[Key, int] = {}
+    first_by_path: dict[str, int] = {}
+    for r in rows:
+        rid = r["_rowid"]
+        for index, k in ((first_by_key, _row_key(r)), (first_by_path, str(r["yml_path"] or ""))):
+            if k == "":
+                continue
+            if k in index:
+                parent[find(rid)] = find(index[k])
+            else:
+                index[k] = rid
+
+    groups: dict[int, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(find(r["_rowid"]), []).append(r)
+
+    # every identity in use, per (ref, type), so suffixes never collide
+    used: dict[tuple[str, str], set[str]] = {}
+    for k in list(disk.keys()) + [_row_key(r) for r in rows]:
+        used.setdefault((k[0], k[1]), set()).add(k[2])
+
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: r["_rowid"])
+
+        def score(r: dict) -> tuple:
+            k = _row_key(r)
+            on_disk = k in disk
+            path_match = on_disk and str(disk[k][0]) == str(r["yml_path"])
+            return (not path_match, not on_disk, r["_rowid"])
+
+        keeper = min(group, key=score)
+        taken: set[Key] = {_row_key(keeper)}
+        ids = ", ".join(str(r["_rowid"]) for r in group)
+        report.duplicates.append(
+            f"DB rows {ids} are duplicates ({_label(_row_key(keeper))}); "
+            f"row {keeper['_rowid']} keeps the record"
+        )
+
+        for r in group:
+            if r is keeper:
+                continue
+            ref, atype, name = _row_key(r)
+            if (ref, atype, name) not in taken and _placement_problem((ref, atype, name)) is None:
+                new_name = name                      # its own identity is free
+            else:
+                n = 2
+                while True:
+                    new_name = f"{name}{DUPLICATE_SUFFIX}{n}"
+                    cand = (ref, atype, new_name)
+                    if (new_name not in used.get((ref, atype), set())
+                            and _placement_problem(cand) is None
+                            and not _path_taken(cand)):
+                        break
+                    n += 1
+            new_key = (ref, atype, new_name)
+            problem = _placement_problem(new_key)
+            if problem:
+                report.conflicts.append(
+                    f"DB row {r['_rowid']} ({_label((ref, atype, name))}) — duplicate "
+                    f"cannot be split: {problem}; left as is"
+                )
+                continue
+
+            target = artifact_yml_path(ref, new_name, ArtifactType(atype))
+            ml = modlog_path(ref, new_name, ArtifactType(atype))
+            what = (f"renamed {name} → {new_name}" if new_name != name
+                    else f"yml_path corrected → {target}")
+            try:
+                if not dry_run:
+                    db.relocate_artifact(r["_rowid"], new_name, target, ml)
+                r["artifact_name"], r["yml_path"] = new_name, str(target)
+                taken.add(new_key)
+                used.setdefault((ref, atype), set()).add(new_name)
+                report.duplicates.append(
+                    f"  row {r['_rowid']}: {what} — review it; delete it if it "
+                    "was a true duplicate"
+                )
+            except Exception as exc:
+                report.errors.append(f"DB row {r['_rowid']} — could not split duplicate: {exc}")
+
+
+def _path_taken(key: Key) -> bool:
+    ref, atype, name = key
+    p = artifact_yml_path(ref, name, ArtifactType(atype))
+    return p.exists() or p.is_symlink()
 
 
 # ── pass 2: disk → DB ─────────────────────────────────────────────────────────
@@ -295,63 +457,52 @@ def _scan_disk(
 def _disk_to_db(
     db,
     disk: dict[Key, tuple[Path, ArtifactYML]],
-    rows: list[sqlite3.Row],
+    rows: list[dict],
     report: SyncReport,
     dry_run: bool,
 ) -> set[int]:
-    """Mirror each YML into the DB. Returns ids of DB rows now accounted for."""
-    by_key: dict[Key, list[sqlite3.Row]] = {}
-    by_path: dict[str, sqlite3.Row] = {}
+    """Mirror each YML into the DB. Returns rowids of DB rows now accounted for."""
+    by_key: dict[Key, list[dict]] = {}
+    by_path: dict[str, list[dict]] = {}
     for r in rows:
         by_key.setdefault(_row_key(r), []).append(r)
-        by_path[str(r["yml_path"])] = r
+        by_path.setdefault(str(r["yml_path"]), []).append(r)
 
     claimed: set[int] = set()
 
     for key, (yp, yml) in sorted(disk.items()):
         label = _label(key)
         matches = by_key.get(key, [])
-        at_path = by_path.get(str(yp))
+        at_path = by_path.get(str(yp), [])
+        involved = {r["_rowid"]: r for r in matches + at_path}
 
-        if len(matches) > 1:
+        if len(involved) > 1:
             report.conflicts.append(
-                f"{label} — {len(matches)} DB rows share this identity "
-                f"(ids {', '.join(str(m['id']) for m in matches)}); none touched"
+                f"{label} — DB rows {', '.join(map(str, sorted(involved)))} all claim "
+                "this record after de-duplication; none touched"
             )
-            claimed.update(m["id"] for m in matches)
+            claimed.update(involved)
             continue
 
-        match = matches[0] if matches else None
-        if match is not None and at_path is not None and match["id"] != at_path["id"]:
-            report.conflicts.append(
-                f"{label} — DB row {match['id']} matches this identity but row "
-                f"{at_path['id']} already owns {yp}; none touched"
-            )
-            claimed.update({match["id"], at_path["id"]})
-            continue
-
+        row = next(iter(involved.values()), None)
         ml = modlog_path(*_path_args(yml))
         try:
-            if match is not None and str(match["yml_path"]) != str(yp):
+            if row is not None and str(row["yml_path"]) != str(yp):
                 if not dry_run:
-                    db.repoint_artifact(str(match["yml_path"]), yp, ml)
-                report.db_repointed.append(f"{label}: {match['yml_path']} → {yp}")
+                    db.relocate_artifact(row["_rowid"], yml.artifact_name, yp, ml)
+                report.db_repointed.append(f"{label}: {row['yml_path']} → {yp}")
 
             if not dry_run:
-                mirror_to_db(db, yml, yp, ml)
+                mirror_to_db(db, yml, yp, ml, row_id=row["_rowid"] if row else None)
 
-            existing = match or at_path
-            if existing is None:
+            if row is None:
                 report.db_inserted.append(label)
             else:
                 report.db_refreshed.append(label)
-                claimed.add(existing["id"])
+                claimed.add(row["_rowid"])
         except Exception as exc:
             report.errors.append(f"{label} — DB mirror failed: {exc}")
-            if match is not None:
-                claimed.add(match["id"])
-            if at_path is not None:
-                claimed.add(at_path["id"])
+            claimed.update(involved)
 
     return claimed
 
@@ -364,7 +515,7 @@ def _path_args(yml: ArtifactYML) -> tuple[str, str, ArtifactType]:
 
 def _db_to_disk(
     db,
-    rows: list[sqlite3.Row],
+    rows: list[dict],
     claimed: set[int],
     blocked: set[Key],
     report: SyncReport,
@@ -372,28 +523,38 @@ def _db_to_disk(
     dry_run: bool,
 ) -> None:
     """Write a YML for every DB row that has none."""
-    groups: dict[Key, list[sqlite3.Row]] = {}
+    groups: dict[Key, list[dict]] = {}
     for r in rows:
-        if r["id"] not in claimed:
+        if r["_rowid"] not in claimed:
             groups.setdefault(_row_key(r), []).append(r)
 
     for key, group in sorted(groups.items()):
         label = _label(key)
 
         if key in blocked:
-            # Already reported in the disk scan — a copy exists, just misplaced.
-            continue
+            continue   # already reported in the disk scan
         if len(group) > 1:
             report.conflicts.append(
-                f"{label} — {len(group)} DB rows share this identity with no YML "
-                f"(ids {', '.join(str(r['id']) for r in group)}); none written"
+                f"{label} — DB rows {', '.join(str(r['_rowid']) for r in group)} still "
+                "share this identity; none written"
             )
             continue
 
         row = group[0]
         problem = _placement_problem(key)
         if problem:
-            report.conflicts.append(f"DB row {row['id']} ({label}) — cannot create YML: {problem}")
+            report.conflicts.append(f"DB row {row['_rowid']} ({label}) — cannot create YML: {problem}")
+            continue
+
+        if _deleted_marker(key):
+            # DeleteService wrote the marker but the DB delete did not finish.
+            if not dry_run:
+                try:
+                    db.delete_artifact_rows(row_id=row["_rowid"])
+                except Exception as exc:
+                    report.errors.append(f"DB row {row['_rowid']} ({label}) — could not finish delete: {exc}")
+                    continue
+            report.deletes_completed.append(f"{label} (DB row {row['_rowid']})")
             continue
 
         ref, atype, name = key
@@ -403,14 +564,14 @@ def _db_to_disk(
         if target.exists() or target.is_symlink():
             _, reason = classify_artifact_yml(target)
             report.conflicts.append(
-                f"DB row {row['id']} ({label}) — {target} already exists but is not a "
+                f"DB row {row['_rowid']} ({label}) — {target} already exists but is not a "
                 f"usable record ({reason or 'see disk conflicts above'}); left untouched"
             )
             continue
 
         yml, origin, err = _recover(db, row, key, target)
         if yml is None:
-            report.conflicts.append(f"DB row {row['id']} ({label}) — cannot rebuild record: {err}")
+            report.conflicts.append(f"DB row {row['_rowid']} ({label}) — cannot rebuild record: {err}")
             continue
 
         if dry_run:
@@ -422,14 +583,14 @@ def _db_to_disk(
             report.yml_created.append(f"{target} (from {origin})")
         except FileExistsError:
             report.conflicts.append(
-                f"DB row {row['id']} ({label}) — {target} appeared during sync; left untouched"
+                f"DB row {row['_rowid']} ({label}) — {target} appeared during sync; left untouched"
             )
         except Exception as exc:
-            report.errors.append(f"DB row {row['id']} ({label}) — YML write failed: {exc}")
+            report.errors.append(f"DB row {row['_rowid']} ({label}) — YML write failed: {exc}")
 
 
 def _recover(
-    db, row: sqlite3.Row, key: Key, target: Path
+    db, row: dict, key: Key, target: Path
 ) -> tuple[Optional[ArtifactYML], str, str]:
     """
     Build the record for a DB row with no canonical YML.
@@ -462,7 +623,7 @@ def _recover(
 
 
 def _yml_from_row(
-    row: sqlite3.Row, project: Optional[sqlite3.Row], key: Key
+    row: dict, project: Optional[sqlite3.Row], key: Key
 ) -> tuple[Optional[ArtifactYML], str]:
     """
     Rebuild an ArtifactYML from DB columns. Empty enum columns fall back to
@@ -472,7 +633,7 @@ def _yml_from_row(
     ref, atype, name = key
 
     def col(name_: str):
-        return row[name_] if name_ in row.keys() else None
+        return row.get(name_)
 
     def s(v) -> str:
         return "" if v is None else str(v)
@@ -541,7 +702,7 @@ def _yml_from_row(
 
 def _write_recovered(
     db,
-    row: sqlite3.Row,
+    row: dict,
     yml: ArtifactYML,
     target: Path,
     ml: Path,
@@ -582,6 +743,7 @@ def _write_recovered(
                 manifest = ManifestYML.new(
                     yml.aimcr_reference, yml.proposal_title, yml.pi_username
                 )
+            manifest.absorb_project_fields(yml)
             entry = ManifestEntry.from_artifact_yml(yml, str(target))
             if manifest.find_by_name(yml.artifact_name):
                 manifest.update_artifact(yml.artifact_name, **vars(entry))
@@ -594,8 +756,8 @@ def _write_recovered(
     # DB: point the row at the new file, then refresh it from the YML
     try:
         if str(row["yml_path"]) != str(target):
-            db.repoint_artifact(str(row["yml_path"]), target, ml)
+            db.relocate_artifact(row["_rowid"], yml.artifact_name, target, ml)
             report.db_repointed.append(f"{label}: {row['yml_path']} → {target}")
-        mirror_to_db(db, yml, target, ml)
+        mirror_to_db(db, yml, target, ml, row_id=row["_rowid"])
     except Exception as exc:
         report.errors.append(f"{label} — YML written but DB row not updated: {exc}")

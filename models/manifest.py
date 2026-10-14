@@ -105,9 +105,10 @@ class ManifestYML:
     Project-level manifest — index of all artifacts under a project.
     Bucketed by artifact type for quick visual scanning.
     """
-    project_id: str
+    project_id: str                 # the AIMCR reference (6####) — directory key
     proposal_title: str = ""
     pi_username: str = ""
+    kaust_project_id: str = ""      # k#### — project profile, auto-filled into new artifacts
     manifest_created: Optional[datetime] = None
     last_modified: Optional[datetime] = None
     last_modified_by: str = ""
@@ -169,6 +170,33 @@ class ManifestYML:
         actor = kwargs.get("last_modified_by", self.last_modified_by)
         self._touch(actor)
 
+    def remove_artifact(self, name: str, actor: str = "") -> bool:
+        """Remove an entry by name from whichever bucket holds it. True if removed."""
+        for bucket in (self.datasets, self.models, self.software):
+            for i, entry in enumerate(bucket):
+                if entry.artifact_name == name:
+                    del bucket[i]
+                    self._touch(actor or self.last_modified_by)
+                    return True
+        return False
+
+    def absorb_project_fields(self, yml) -> bool:
+        """
+        Copy the project-level fields of a saved artifact into the manifest
+        (the project profile). Only non-empty values are taken, so a record
+        with a blank field never erases what the project already has.
+        Returns True if anything changed.
+        """
+        changed = False
+        for mf, yf in (("proposal_title", "proposal_title"),
+                       ("pi_username", "pi_username"),
+                       ("kaust_project_id", "project_id")):
+            val = str(getattr(yml, yf, "") or "").strip()
+            if val and val != getattr(self, mf):
+                setattr(self, mf, val)
+                changed = True
+        return changed
+
     def _touch(self, actor: str) -> None:
         """Update manifest-level last_modified on any write."""
         self.last_modified = datetime.now(tz=timezone.utc)
@@ -191,6 +219,7 @@ class ManifestYML:
             "project_id": self.project_id,
             "proposal_title": self.proposal_title,
             "pi_username": self.pi_username,
+            "kaust_project_id": self.kaust_project_id,
             "manifest_created": (
                 self.manifest_created.isoformat()
                 if self.manifest_created else ""
@@ -218,6 +247,7 @@ class ManifestYML:
             project_id=d.get("project_id", ""),
             proposal_title=d.get("proposal_title", ""),
             pi_username=d.get("pi_username", ""),
+            kaust_project_id=str(d.get("kaust_project_id") or ""),
             manifest_created=_dt(d.get("manifest_created", "")),
             last_modified=_dt(d.get("last_modified", "")),
             last_modified_by=d.get("last_modified_by", ""),

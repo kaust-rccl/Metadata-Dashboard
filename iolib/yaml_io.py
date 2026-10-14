@@ -34,6 +34,8 @@ import logging
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
+from iolib.perms import apply_group_rwx, make_dirs, open_lock_file
+
 logger = logging.getLogger(__name__)
 
 # Writer — strict, comment-preserving
@@ -97,7 +99,8 @@ def load_yaml(path: Path) -> dict:
 
 
 def atomic_write(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write via temp file + os.replace. The file is group k03 rwx (iolib.perms)."""
+    make_dirs(path.parent)
     tmp = path.with_suffix(path.suffix + ".tmp")
 
     yaml = YAML()
@@ -109,6 +112,7 @@ def atomic_write(path: Path, data: dict) -> None:
     commented = _to_commented_map(data)
     with tmp.open("w", encoding="utf-8") as fh:
         yaml.dump(commented, fh)
+    apply_group_rwx(tmp, directory=False)
     os.replace(tmp, path)
 
 
@@ -121,7 +125,7 @@ def atomic_create(path: Path, data: dict) -> None:
     Implemented as write-to-temp then os.link(): link() fails atomically if
     the destination exists, unlike os.replace() which silently overwrites.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    make_dirs(path.parent)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.create.tmp")
 
     yaml = YAML()
@@ -133,6 +137,7 @@ def atomic_create(path: Path, data: dict) -> None:
     try:
         with tmp.open("w", encoding="utf-8") as fh:
             yaml.dump(_to_commented_map(data), fh)
+        apply_group_rwx(tmp, directory=False)
         os.link(tmp, path)
     finally:
         try:
@@ -155,8 +160,7 @@ def file_lock(path: Path):
             atomic_write(manifest_path, manifest)
     """
     lock_path = path.with_suffix(".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_fd = lock_path.open("w")
+    lock_fd = open_lock_file(lock_path)   # group k03 rwx, never truncated
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         yield
