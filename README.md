@@ -157,7 +157,7 @@ checksum runs. Open it from *Existing artifacts*:
 1. **Checksum verification job (CPUP)** — the checksum file is suggested from
    the source path (`checksum.sha256`, other `*.sha256`/`*.md5`, two levels
    down at most). Submitting creates
-   `support_team/<6####>/verify_checksum/<datasets|models|software>/<name>/`
+   `support_team/<6####>/<datasets|models|software>/<name>/verify_checksum/`
    (group k03, setgid), copies `VERIFY_SCRIPT` into it and runs `sbatch` with
    umask 002 so everything the job writes is group read-write. Resubmission on
    time-out is on by default. Progress is read from the script's own state
@@ -165,6 +165,11 @@ checksum runs. Open it from *Existing artifacts*:
    and across resubmitted jobs. When every file is OK the CPUP checksum box is
    ticked automatically (on opening the record, and at every app start).
    Where `sbatch` is not available, the exact command to run is shown instead.
+   Jobs submitted under the earlier layout
+   (`<6####>/verify_checksum/<type>/<name>/`) are still monitored and resumed
+   there. **Note:** `verify_checksum/` sits inside the artifact directory, so
+   exclude it when copying the artifact (e.g. `rsync --exclude verify_checksum`)
+   or regenerating its checksum file.
 2. **DM ticket text** — once the checksum is verified: a suggested subject and
    body from the template, editable and saved per artifact in the DB
    (`ticket_drafts`), never in the YML.
@@ -173,3 +178,11 @@ checksum runs. Open it from *Existing artifacts*:
 **Stage artifact** in the form still stages directly when the ticket already
 exists. The Move page lists staged artifacts only, so preparing records never
 reach movers.
+
+
+## UI notes
+
+- Opening a record (Curate, Move, Browse) replaces the list; "← Back to all
+  artifacts" returns to it with search and filters kept.
+- Light theme by default (`.streamlit/config.toml`); switch in ⋮ → Settings.
+  Start Streamlit from the repo root so the file is found.

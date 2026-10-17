@@ -18,7 +18,7 @@ from pathlib import Path
 import streamlit as st
 
 from auth.session import current_db, current_role, current_username, init_session, require_role
-from components.artifact_table import render_artifact_table
+from components.artifact_table import render_list_or_detail
 from components.fields import (
     render_checksum_verification, render_field,
     render_status_reason_list, render_text_area,
@@ -57,19 +57,11 @@ def main() -> None:
         f"{len(rows)} staged · {len(blocked)} blocked"
     )
 
-    yml_path = render_artifact_table(
-        all_rows, key_prefix="mov",
+    render_list_or_detail(
+        all_rows, key_prefix="mov", selected_key="mov_selected_yml",
+        render_detail=lambda p: _render_mover_detail(p, actor, role, db),
         status_filter=None,
     )
-    if yml_path:
-        st.session_state["mov_selected_yml"] = yml_path
-
-    if "mov_selected_yml" in st.session_state:
-        st.divider()
-        _render_mover_detail(
-            Path(st.session_state["mov_selected_yml"]),
-            actor, role, db
-        )
 
 
 def _render_mover_detail(

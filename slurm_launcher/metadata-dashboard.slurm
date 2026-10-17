@@ -33,7 +33,9 @@ echo ""
 echo "Then open your browser at: http://localhost:${port}"
 echo ""
 
+# --pwd /app: Streamlit reads .streamlit/config.toml (theme) from its start dir
 singularity exec \
+    --pwd /app \
     --bind "${APP_DIR}:/app" \
     --bind "${SCRATCH_BASE}:${SCRATCH_BASE}" \
     --bind "${DB_DIR}:${DB_DIR}" \

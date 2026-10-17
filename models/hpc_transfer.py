@@ -32,7 +32,7 @@ def status_badge(status: str) -> str:
     """Return an HTML badge span for the given status string."""
     fg, bg = STATUS_COLORS.get(status, ("#7a82a0", "rgba(122,130,160,0.1)"))
     return (
-        f"<span style='background:{bg};color:{fg};"
+        f"<span style='background:{bg};color:{fg};white-space:nowrap;display:inline-block;"
         f"padding:2px 9px;border-radius:3px;"
         f"font-size:0.78em;font-weight:600;font-family:monospace;"
         f"white-space:nowrap;display:inline-block;margin-top:2px;"

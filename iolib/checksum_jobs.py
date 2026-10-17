@@ -4,9 +4,9 @@ iolib/checksum_jobs.py
 Portal-submitted checksum verification (CPUP) using the resumable
 generic_verify.slurm script.
 
-Layout, one directory per artifact (a proposal can hold many):
+Layout, one directory per artifact:
 
-    PROJECTS_BASE/<6####>/verify_checksum/<datasets|models|software>/<name>/
+    PROJECTS_BASE/<6####>/<datasets|models|software>/<name>/verify_checksum/
         generic_verify.slurm   copy of VERIFY_SCRIPT taken at submission
         job.yml                our record: checksum file, data dir, submissions
         logs/<jobname>_<id>.out   written by Slurm (one per job, incl. resubmits)
@@ -36,8 +36,8 @@ from pathlib import Path
 from typing import Optional
 
 from config import (
-    CHECKSUM_CANDIDATE_NAMES, CHECKSUM_SUFFIXES, VERIFY_SCRIPT, VERIFY_UMASK,
-    verify_job_dir,
+    CHECKSUM_CANDIDATE_NAMES, CHECKSUM_SUFFIXES, VERIFY_DIR_NAME, VERIFY_SCRIPT,
+    VERIFY_UMASK, verify_job_dir, verify_job_dir_legacy,
 )
 from iolib.perms import apply_group_rwx, make_dirs
 from iolib.yaml_io import atomic_write, file_lock, load_yaml
@@ -101,7 +101,19 @@ class JobStatus:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def job_dir_for(yml) -> Path:
-    return verify_job_dir(yml.aimcr_reference, yml.artifact_type, yml.artifact_name)
+    """
+    <6####>/<type>/<name>/verify_checksum. A job already submitted under the
+    earlier layout (<6####>/verify_checksum/<type>/<name>) keeps being used —
+    monitored and resumed there — so jobs in flight are not lost; moving a
+    live job's directory would break its absolute paths.
+    """
+    new = verify_job_dir(yml.aimcr_reference, yml.artifact_type, yml.artifact_name)
+    if (new / JOB_FILE).is_file():
+        return new
+    old = verify_job_dir_legacy(yml.aimcr_reference, yml.artifact_type, yml.artifact_name)
+    if (old / JOB_FILE).is_file():
+        return old
+    return new
 
 
 def slurm_available() -> bool:
@@ -176,7 +188,8 @@ def suggest_checksum_files(source_path: str, current: str = "", limit: int = 8,
                 try:
                     if e.is_file(follow_symlinks=False) and e.name.endswith(CHECKSUM_SUFFIXES):
                         add(Path(e.path))
-                    elif e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
+                    elif (e.is_dir(follow_symlinks=False) and not e.name.startswith(".")
+                          and e.name != VERIFY_DIR_NAME):
                         nxt.append(Path(e.path))
                 except OSError:
                     continue

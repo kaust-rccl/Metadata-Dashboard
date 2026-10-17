@@ -70,7 +70,14 @@ CHECKSUM_SUFFIXES: tuple[str, ...] = (".sha256", ".sha512", ".sha1", ".md5")
 
 
 def verify_job_dir(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name: str) -> Path:
-    """PROJECTS_BASE/<6####>/verify_checksum/<datasets|models|software>/<name>/"""
+    """PROJECTS_BASE/<6####>/<datasets|models|software>/<name>/verify_checksum/"""
+    return (proposal_dir(aimcr_reference) / ARTIFACT_TYPE_DIR[artifact_type]
+            / artifact_name / VERIFY_DIR_NAME)
+
+
+def verify_job_dir_legacy(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name: str) -> Path:
+    """Earlier layout, PROJECTS_BASE/<6####>/verify_checksum/<type>/<name>/ —
+    still monitored (and resumed) for jobs submitted there."""
     return (proposal_dir(aimcr_reference) / VERIFY_DIR_NAME
             / ARTIFACT_TYPE_DIR[artifact_type] / artifact_name)
 

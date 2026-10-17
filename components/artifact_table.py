@@ -13,7 +13,8 @@ a warning above the table) until sync splits them or one is deleted.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Optional
 
 import streamlit as st
 
@@ -57,6 +58,14 @@ def render_artifact_table(
 
 
     # ── filters ───────────────────────────────────────────────────────────────
+    # Filters survive opening a record and coming back: Streamlit drops a
+    # widget's state on any run where the widget is not drawn, so each value
+    # is mirrored in a plain "<key>__keep" entry and restored from it.
+    for suffix in ("search", "type", "status"):
+        k = f"{key_prefix}_{suffix}"
+        if k not in st.session_state and f"{k}__keep" in st.session_state:
+            st.session_state[k] = st.session_state[f"{k}__keep"]
+
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         search = st.text_input(
@@ -78,6 +87,9 @@ def render_artifact_table(
             )
         else:
             status_sel = status_filter.value
+
+    for suffix, val in (("search", search), ("type", type_sel), ("status", status_sel)):
+        st.session_state[f"{key_prefix}_{suffix}__keep"] = val
 
     # ── filter rows ───────────────────────────────────────────────────────────
     filtered = list(rows)
@@ -122,7 +134,7 @@ def render_artifact_table(
         )
 
     # ── table header ──────────────────────────────────────────────────────────
-    hcols = st.columns([3, 1, 1, 1, 2, 1])
+    hcols = st.columns([3, 1, 1, 1.4, 2, 1])
     headers = ["Name", "Type", "Version", "Status", "Last modified", ""]
     for col, hdr in zip(hcols, headers):
         col.markdown(f"**{hdr}**")
@@ -133,7 +145,7 @@ def render_artifact_table(
     selected_yml_path: Optional[str] = None
 
     for i, row in enumerate(filtered):
-        rcols = st.columns([3, 1, 1, 1, 2, 1])
+        rcols = st.columns([3, 1, 1, 1.4, 2, 1])
         marker = " ⚠️" if _is_dup(row) else ""
         rcols[0].markdown(f"`{row['artifact_name']}`{marker}")
         rcols[1].caption(row["artifact_type"])
@@ -153,3 +165,31 @@ def render_artifact_table(
             selected_yml_path = row["yml_path"]
 
     return selected_yml_path
+
+
+def render_list_or_detail(
+    rows: list,
+    key_prefix: str,
+    selected_key: str,
+    render_detail: Callable[[Path], None],
+    back_label: str = "← Back to all artifacts",
+    **table_kwargs,
+) -> None:
+    """
+    Show either the artifact table or the opened record — never both.
+
+    Opening a record replaces the list (so it is not drawn underneath every
+    row), with a back button on top. The table's filters are kept.
+    `selected_key` is the session key holding the open record's yml_path.
+    """
+    if selected_key in st.session_state:
+        if st.button(back_label, key=f"{key_prefix}_back"):
+            st.session_state.pop(selected_key, None)
+            st.rerun()
+        render_detail(Path(st.session_state[selected_key]))
+        return
+
+    yml_path = render_artifact_table(rows, key_prefix=key_prefix, **table_kwargs)
+    if yml_path:
+        st.session_state[selected_key] = yml_path
+        st.rerun()

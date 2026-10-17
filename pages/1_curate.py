@@ -24,7 +24,7 @@ from pathlib import Path
 import streamlit as st
 
 from auth.session import current_db, current_role, current_username, init_session, require_role
-from components.artifact_table import render_artifact_table
+from components.artifact_table import render_list_or_detail
 from components.fields import (
     render_checksum_verification, render_field, render_status_reason_list,
     render_text_area, section_header, status_badge,
@@ -70,17 +70,10 @@ def main() -> None:
 
     # ── existing artifacts ────────────────────────────────────────────────────
     with tab_existing:
-        rows = db.list_artifacts()
-        yml_path = render_artifact_table(rows, key_prefix="cur")
-        if yml_path:
-            st.session_state["cur_selected_yml"] = yml_path
-
-        if "cur_selected_yml" in st.session_state:
-            st.divider()
-            _render_artifact_detail(
-                Path(st.session_state["cur_selected_yml"]),
-                actor, role, db
-            )
+        render_list_or_detail(
+            db.list_artifacts(), key_prefix="cur", selected_key="cur_selected_yml",
+            render_detail=lambda p: _render_artifact_detail(p, actor, role, db),
+        )
 
 
 def _render_new_artifact_form(actor: str, db: Database) -> None:

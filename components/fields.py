@@ -163,7 +163,7 @@ def status_badge(status: Status) -> str:
     }
     fg, bg = colors.get(status, ("#444", "#eee"))
     return (
-        f"<span style='background:{bg};color:{fg};"
+        f"<span style='background:{bg};color:{fg};white-space:nowrap;display:inline-block;"
         f"padding:2px 10px;border-radius:12px;"
         f"font-size:0.82em;font-weight:600;'>"
         f"{status.value.upper()}</span>"

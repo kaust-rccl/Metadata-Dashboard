@@ -14,7 +14,7 @@ from pathlib import Path
 import streamlit as st
 
 from auth.session import current_db, current_role, current_username, init_session
-from components.artifact_table import render_artifact_table
+from components.artifact_table import render_list_or_detail
 from components.fields import (
     render_checksum_verification, render_field,
     render_status_reason_list, render_text_area,
@@ -35,14 +35,10 @@ def main() -> None:
     role = current_role()
     st.caption(f"Signed in as **{current_username()}** · role: `{role.value}`")
 
-    rows = db.list_artifacts()
-    yml_path = render_artifact_table(rows, key_prefix="brw")
-    if yml_path:
-        st.session_state["brw_selected_yml"] = yml_path
-
-    if "brw_selected_yml" in st.session_state:
-        st.divider()
-        _render_readonly_detail(Path(st.session_state["brw_selected_yml"]))
+    render_list_or_detail(
+        db.list_artifacts(), key_prefix="brw", selected_key="brw_selected_yml",
+        render_detail=_render_readonly_detail,
+    )
 
 
 def _render_readonly_detail(yml_path: Path) -> None:
