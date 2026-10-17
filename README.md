@@ -170,6 +170,13 @@ checksum runs. Open it from *Existing artifacts*:
    there. **Note:** `verify_checksum/` sits inside the artifact directory, so
    exclude it when copying the artifact (e.g. `rsync --exclude verify_checksum`)
    or regenerating its checksum file.
+   **Audit copy:** once the job verifies every file OK, its directory is copied
+   to `/project/k03/<6####>/audit/<datasets|models|software>/<name>/` — every
+   file checked (size + sha256) before the copy is put in place, group k03.
+   Only login nodes can write to /project, so the app makes the copy itself
+   when it runs on a login node; otherwise it is shown as pending and
+   `dashboard audit-copy <aimcr> <name>` (or `--pending` for all) on a login
+   node completes it. The CLI wrapper binds `/project/k03` for this.
 2. **DM ticket text** — once the checksum is verified: a suggested subject and
    body from the template, editable and saved per artifact in the DB
    (`ticket_drafts`), never in the YML.

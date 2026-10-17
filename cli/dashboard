@@ -13,7 +13,13 @@ if [ ! -f "$SIF" ]; then
     exit 1
 fi
 
+# /project is writable from login nodes only; bind it so `dashboard audit-copy`
+# can write the checksum audit copies (skipped where it does not exist).
+PROJECT_BIND=()
+[ -d /project/k03 ] && PROJECT_BIND=(--bind /project/k03:/project/k03)
+
 exec singularity exec \
+    "${PROJECT_BIND[@]}" \
     --bind "${APP_DIR}:/app" \
     --bind "${DB_DIR}" \
     --bind "${SCRATCH_BASE}:${SCRATCH_BASE}" \

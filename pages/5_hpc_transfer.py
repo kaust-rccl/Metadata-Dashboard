@@ -12,6 +12,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+# Every page sets its own layout: a page loaded directly (or refreshed) does
+# not inherit app.py's, and falls back to Streamlit's narrow centred layout.
+st.set_page_config(page_title="HPC transfers — Artifact Tracker", page_icon="📦",
+                   layout="wide", initial_sidebar_state="expanded")
+
 from auth.session import current_username, init_session, require_role
 from config import Role
 from iolib.transfers_db import TransfersDatabase

@@ -23,6 +23,11 @@ from pathlib import Path
 
 import streamlit as st
 
+# Every page sets its own layout: a page loaded directly (or refreshed) does
+# not inherit app.py's, and falls back to Streamlit's narrow centred layout.
+st.set_page_config(page_title="Curate — Artifact Tracker", page_icon="📦",
+                   layout="wide", initial_sidebar_state="expanded")
+
 from auth.session import current_db, current_role, current_username, init_session, require_role
 from components.artifact_table import render_list_or_detail
 from components.fields import (

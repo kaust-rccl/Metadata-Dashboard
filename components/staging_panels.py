@@ -80,10 +80,33 @@ def render_checksum_panel(yml, yml_path: Path, actor: str, db) -> None:
                     lines = status.log_path.read_text(errors="replace").splitlines()[-40:]
                     st.code("\n".join(lines) or "(empty)")
 
-        if status.is_live or status.state == "ok":
+        if status.state == "ok":
+            _render_audit(yml, yml_path, status)
+            return
+        if status.is_live:
             return
 
         _render_submit_form(yml, yml_path, actor, db, status)
+
+
+def _render_audit(yml, yml_path: Path, status) -> None:
+    section_header("Audit copy")
+    a = status.audit
+    if status.audit_done:
+        st.caption(f"✅ Copied to `{a['path']}` — {a.get('files', '?')} files verified "
+                   f"against the job directory, {str(a.get('copied_at', ''))[:16]}.")
+        return
+    st.warning(f"Not copied yet to `{a.get('path') or cj.audit_dir(yml.aimcr_reference, yml.artifact_type, yml.artifact_name)}`."
+               + (f"  \nLast attempt: {a['error']}" if a.get("error") else ""))
+    if st.button("Copy to audit now", key=_k(yml_path, "ck_audit")):
+        ok, m = cj.audit_copy(yml, status)
+        if ok:
+            st.success(m)
+            st.rerun()
+        st.error(m.split(" Run on a login node")[0])
+    st.caption("Compute nodes cannot write to /project. If this dashboard runs on one, "
+               "run this on a login node:")
+    st.code(f"dashboard audit-copy {yml.aimcr_reference} {yml.artifact_name}", language="bash")
 
 
 def _render_submit_form(yml, yml_path: Path, actor: str, db, status) -> None:

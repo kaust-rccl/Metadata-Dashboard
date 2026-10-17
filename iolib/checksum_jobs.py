@@ -20,6 +20,13 @@ Monitoring reads only files on disk (the script's state + logs), so it
 survives app restarts, works inside the container where Slurm commands are
 missing, and follows AUTO_RESUBMIT chains whose job IDs the portal never saw.
 squeue / sacct, when available, only add the live queued/running state.
+
+Audit copy: once a job verifies every file OK, the job directory is copied
+to AUDIT_BASE/<6####>/audit/<type>/<name>/ (/project/k03/...). Compute
+nodes cannot write to /project, so the copy is made by the app process —
+automatically when it runs on a login node. Where /project is not writable
+(app launched on a compute node / in the container) the copy is recorded as
+pending, and `dashboard audit-copy` on a login node completes it.
 """
 
 from __future__ import annotations
@@ -36,8 +43,8 @@ from pathlib import Path
 from typing import Optional
 
 from config import (
-    CHECKSUM_CANDIDATE_NAMES, CHECKSUM_SUFFIXES, VERIFY_DIR_NAME, VERIFY_SCRIPT,
-    VERIFY_UMASK, verify_job_dir, verify_job_dir_legacy,
+    AUDIT_BASE, CHECKSUM_CANDIDATE_NAMES, CHECKSUM_SUFFIXES, VERIFY_DIR_NAME,
+    VERIFY_SCRIPT, VERIFY_UMASK, audit_dir, verify_job_dir, verify_job_dir_legacy,
 )
 from iolib.perms import apply_group_rwx, make_dirs
 from iolib.yaml_io import atomic_write, file_lock, load_yaml
@@ -74,6 +81,14 @@ class JobStatus:
     error_lines: list[str] = field(default_factory=list)
     log_path: Optional[Path] = None
     slurm: bool = False
+    audit: dict = field(default_factory=dict)   # job.yml "audit" record, if any
+
+    @property
+    def audit_done(self) -> bool:
+        """The audit copy exists and is from the job that produced this result."""
+        a = self.audit
+        return bool(a.get("path") and a.get("job_id") == (self.job_ids[-1] if self.job_ids else "")
+                    and not a.get("error"))
 
     @property
     def done(self) -> int:
@@ -374,6 +389,7 @@ def job_status(yml) -> JobStatus:
     if job is None:
         return st
 
+    st.audit = job.get("audit") or {}
     st.checksum_file = job.get("checksum_file", "")
     st.data_dir = job.get("data_dir", "")
     subs = job.get("submissions") or []
@@ -448,39 +464,151 @@ def job_status(yml) -> JobStatus:
 
 def auto_apply(yml, db, status: Optional[JobStatus] = None) -> Optional[str]:
     """
-    If the job verified every file OK and the record's CPUP checksum box is
-    not ticked, tick it — verified_by is whoever submitted the job, and the
-    modlog note records the job and counts. Returns a message, or None if
-    nothing was done.
+    For a job that verified every file OK:
+      - tick the record's CPUP checksum box if it is not ticked yet
+        (verified_by = whoever submitted the job; modlog notes job + counts)
+      - make the audit copy if it is missing or from an earlier job
+    Returns a message describing what was done, or None if nothing was.
     """
     st = status or job_status(yml)
-    if st.state != "ok" or yml.checksum_verified_cpup.verified:
+    if st.state != "ok":
         return None
-    from iolib.services import CurationUpdateService
-    from models.artifact import ChecksumVerification
-    who = st.submitted_by or "checksum-job"
-    res = CurationUpdateService().execute(
-        yml, f"{who} (checksum job {st.job_ids[-1] if st.job_ids else '?'})",
-        {"checksum_verified_cpup": ChecksumVerification(
-            verified=True, verified_by=who, verified_date=datetime.now(tz=timezone.utc))},
-        db,
-    )
-    if res.success:
-        return (f"CPUP checksum marked verified: {st.ok}/{st.total} files OK "
-                f"(job {', '.join(st.job_ids[-1:])}).")
-    logger.warning("auto-apply failed for %s: %s", yml.artifact_name, res.errors)
-    return None
+    msgs: list[str] = []
+    if not yml.checksum_verified_cpup.verified:
+        from iolib.services import CurationUpdateService
+        from models.artifact import ChecksumVerification
+        who = st.submitted_by or "checksum-job"
+        res = CurationUpdateService().execute(
+            yml, f"{who} (checksum job {st.job_ids[-1] if st.job_ids else '?'})",
+            {"checksum_verified_cpup": ChecksumVerification(
+                verified=True, verified_by=who, verified_date=datetime.now(tz=timezone.utc))},
+            db,
+        )
+        if res.success:
+            msgs.append(f"CPUP checksum marked verified: {st.ok}/{st.total} files OK "
+                        f"(job {', '.join(st.job_ids[-1:])}).")
+        else:
+            logger.warning("auto-apply failed for %s: %s", yml.artifact_name, res.errors)
+    if not st.audit_done:
+        ok, m = audit_copy(yml, st)
+        if ok:
+            msgs.append(m)
+    return " ".join(msgs) or None
+
+
+# ── audit copy ────────────────────────────────────────────────────────────────
+
+_AUDIT_IGNORE = shutil.ignore_patterns("*.lock", "*.tmp", ".*", "stop")
+
+
+def _sha256(p: Path) -> str:
+    h = hashlib.sha256()
+    with p.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _files(root: Path) -> dict[str, Path]:
+    """Relative path → file, applying the same ignore rules as the copy."""
+    out: dict[str, Path] = {}
+    for d, dirs, names in os.walk(root):
+        ignored = _AUDIT_IGNORE(d, dirs + names)
+        dirs[:] = [x for x in dirs if x not in ignored]
+        for n in names:
+            if n not in ignored:
+                p = Path(d) / n
+                out[str(p.relative_to(root))] = p
+    return out
+
+
+def audit_login_hint(yml) -> str:
+    return (f"Run on a login node (compute nodes cannot write to {AUDIT_BASE}):\n"
+            f"dashboard audit-copy {yml.aimcr_reference} {yml.artifact_name}")
+
+
+def audit_copy(yml, status: Optional[JobStatus] = None, force: bool = False) -> tuple[bool, str]:
+    """
+    Copy the verified job directory to audit_dir(...). Copies into a temp
+    directory beside the target, checks every file (size + sha256) against
+    the source, then renames it into place — a failed or partial copy never
+    sits at the audit path. Group k03 rwx throughout. The outcome is written
+    to job.yml ("audit"), so a pending copy is visible after restarts.
+    """
+    st = status or job_status(yml)
+    if st.state != "ok":
+        return False, "Only a job that verified every file OK is copied to audit."
+    if st.audit_done and not force:
+        return True, f"Audit copy already at {st.audit['path']}."
+
+    jd = st.job_dir
+    target = audit_dir(yml.aimcr_reference, yml.artifact_type, yml.artifact_name)
+    job_id = st.job_ids[-1] if st.job_ids else ""
+
+    def record(entry: dict) -> None:
+        with file_lock(jd / JOB_FILE):
+            job = load_job(jd) or {}
+            strip = lambda e: {k: v for k, v in (e or {}).items() if k != "attempted_at"}
+            if strip(job.get("audit")) != strip(entry):   # no rewrite per page render
+                job["audit"] = entry
+                atomic_write(jd / JOB_FILE, job)
+
+    if not AUDIT_BASE.is_dir() or not os.access(AUDIT_BASE, os.W_OK | os.X_OK):
+        reason = (f"{AUDIT_BASE} is not available or not writable here "
+                  f"(host {os.uname().nodename})")
+        record({"path": str(target), "job_id": job_id, "error": reason,
+                "attempted_at": datetime.now(tz=timezone.utc).isoformat()})
+        return False, f"Audit copy pending: {reason}. " + audit_login_hint(yml)
+
+    tmp = target.parent / f".{target.name}.copy-{os.getpid()}"
+    old = target.parent / f".{target.name}.old-{os.getpid()}"
+    try:
+        make_dirs(target.parent)
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.copytree(jd, tmp, ignore=_AUDIT_IGNORE, copy_function=shutil.copy2)
+        for d, dirs, names in os.walk(tmp):
+            apply_group_rwx(Path(d), directory=True)
+            for n in names:
+                apply_group_rwx(Path(d) / n, directory=False)
+
+        src, dst = _files(jd), _files(tmp)
+        if set(src) != set(dst):
+            raise OSError(f"file lists differ: {sorted(set(src) ^ set(dst))[:5]}")
+        size = 0
+        for rel, sp in src.items():
+            dp = dst[rel]
+            if sp.stat().st_size != dp.stat().st_size or _sha256(sp) != _sha256(dp):
+                raise OSError(f"copy of {rel} does not match the source")
+            size += sp.stat().st_size
+
+        if target.exists():
+            os.rename(target, old)
+        os.rename(tmp, target)
+        shutil.rmtree(old, ignore_errors=True)
+    except OSError as exc:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if old.exists() and not target.exists():
+            os.rename(old, target)          # put the previous copy back
+        record({"path": str(target), "job_id": job_id, "error": str(exc),
+                "attempted_at": datetime.now(tz=timezone.utc).isoformat()})
+        return False, f"Audit copy failed: {exc}. " + audit_login_hint(yml)
+
+    record({"path": str(target), "job_id": job_id, "files": len(src), "bytes": size,
+            "copied_at": datetime.now(tz=timezone.utc).isoformat()})
+    return True, f"Audit copy written to {target} ({len(src)} files, verified)."
 
 
 def refresh_pending(db) -> list[str]:
     """
-    Startup pass: for every preparing/staged record with a checksum job and
-    an unticked CPUP box, apply a completed-OK result. Returns messages.
+    Startup pass: for every record with a checksum job that verified OK,
+    tick the CPUP box and/or make the audit copy if either is missing.
+    Returns messages.
     """
     from config import Status
     from iolib.yaml_io import load_artifact_yml
     msgs: list[str] = []
-    for status in (Status.PREPARING.value, Status.STAGED.value):
+    for status in (Status.PREPARING.value, Status.STAGED.value,
+                   Status.BLOCKED.value, Status.MOVED.value):
         try:
             rows = db.list_artifacts(status=status)
         except Exception:
@@ -488,11 +616,12 @@ def refresh_pending(db) -> list[str]:
         for r in rows:
             try:
                 yml = load_artifact_yml(Path(r["yml_path"]))
-                if yml is None or yml.checksum_verified_cpup.verified:
+                if yml is None or not (job_dir_for(yml) / JOB_FILE).is_file():
                     continue
-                if not (job_dir_for(yml) / JOB_FILE).is_file():
+                st = job_status(yml)
+                if st.state != "ok" or (yml.checksum_verified_cpup.verified and st.audit_done):
                     continue
-                m = auto_apply(yml, db)
+                m = auto_apply(yml, db, st)
                 if m:
                     msgs.append(f"{yml.artifact_name}: {m}")
             except Exception as exc:

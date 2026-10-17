@@ -133,8 +133,14 @@ def render_artifact_table(
             icon="⚠️",
         )
 
+    # buttons never wrap ("Open" was breaking over two lines in narrow columns)
+    st.markdown(
+        "<style>div[data-testid='stButton'] button{white-space:nowrap;min-width:fit-content;}</style>",
+        unsafe_allow_html=True,
+    )
+
     # ── table header ──────────────────────────────────────────────────────────
-    hcols = st.columns([3, 1, 1, 1.4, 2, 1])
+    hcols = st.columns([3, 1, 1, 1.4, 2, 1.2])
     headers = ["Name", "Type", "Version", "Status", "Last modified", ""]
     for col, hdr in zip(hcols, headers):
         col.markdown(f"**{hdr}**")
@@ -145,7 +151,7 @@ def render_artifact_table(
     selected_yml_path: Optional[str] = None
 
     for i, row in enumerate(filtered):
-        rcols = st.columns([3, 1, 1, 1.4, 2, 1])
+        rcols = st.columns([3, 1, 1, 1.4, 2, 1.2])
         marker = " ⚠️" if _is_dup(row) else ""
         rcols[0].markdown(f"`{row['artifact_name']}`{marker}")
         rcols[1].caption(row["artifact_type"])

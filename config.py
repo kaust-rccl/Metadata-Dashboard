@@ -75,6 +75,20 @@ def verify_job_dir(aimcr_reference: str, artifact_type: "ArtifactType", artifact
             / artifact_name / VERIFY_DIR_NAME)
 
 
+# Audit copy of a verified checksum job (logs, state, job.yml, script):
+#   AUDIT_BASE/<6####>/audit/<datasets|models|software>/<name>/
+# /project is writable from login nodes only — the copy is made by the app
+# process (never a Slurm job); elsewhere it stays pending (see checksum_jobs).
+AUDIT_BASE: Path = Path("/project/k03")
+AUDIT_DIR_NAME: str = "audit"
+
+
+def audit_dir(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name: str) -> Path:
+    """AUDIT_BASE/<6####>/audit/<datasets|models|software>/<name>/"""
+    return (AUDIT_BASE / aimcr_reference / AUDIT_DIR_NAME
+            / ARTIFACT_TYPE_DIR[artifact_type] / artifact_name)
+
+
 def verify_job_dir_legacy(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name: str) -> Path:
     """Earlier layout, PROJECTS_BASE/<6####>/verify_checksum/<type>/<name>/ —
     still monitored (and resumed) for jobs submitted there."""

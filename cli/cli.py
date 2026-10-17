@@ -11,6 +11,7 @@ HPC-AI pipeline commands (operate on AIMCR artifacts):
   dashboard edit <aimcr> <name> field=value ...
   dashboard sync [--dry-run] [--verbose] [--json]
   dashboard delete <aimcr> <name> <reason> [--yes]
+  dashboard audit-copy <aimcr> <name> | --pending   (run on a login node)
 
 HPC pipeline commands (operate on ticket-driven transfers):
   dashboard hpc list [--status --ticket --json]
@@ -379,6 +380,46 @@ def cmd_delete(args: argparse.Namespace) -> None:
     _print_result(DeleteService().execute(yml, _actor(), role, args.reason, _db()))
 
 
+def cmd_audit_copy(args: argparse.Namespace) -> None:
+    """
+    Copy verified checksum job directories to /project/k03/<6####>/audit/...
+    Must run on a login node: compute nodes cannot write to /project.
+    """
+    from iolib import checksum_jobs as cj
+    db = _db()
+    targets = []
+    if args.pending:
+        for r in db.list_artifacts():
+            y = load_artifact_yml(Path(r["yml_path"]))
+            if y is not None and (cj.job_dir_for(y) / cj.JOB_FILE).is_file():
+                targets.append(y)
+    elif args.aimcr and args.artifact_name:
+        targets.append(_resolve_yml(args.aimcr, args.artifact_name)[0])
+    else:
+        err("give <aimcr> <name>, or --pending")
+        sys.exit(2)
+
+    failed = done = 0
+    for y in targets:
+        st = cj.job_status(y)
+        if st.state != "ok":
+            if not args.pending:
+                warn(f"{y.artifact_name}: checksum job is '{st.state}', not verified OK — nothing to copy")
+                failed += 1
+            continue
+        if st.audit_done and not args.force:
+            if not args.pending:
+                ok(f"{y.artifact_name}: already copied to {st.audit['path']}")
+            continue
+        good, msg = cj.audit_copy(y, st, force=args.force)
+        (ok if good else err)(f"{y.artifact_name}: {msg.split(' Run on a login node')[0]}")
+        done += good
+        failed += not good
+    if args.pending:
+        print(f"{done} copied, {failed} failed.")
+    sys.exit(1 if failed else 0)
+
+
 # ── HPC pipeline commands ─────────────────────────────────────────────────────
 
 def cmd_hpc_list(args: argparse.Namespace) -> None:
@@ -737,6 +778,14 @@ HPC pipeline:
     p_delete.add_argument("reason",        metavar="REASON")
     p_delete.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
 
+    p_audit = sub.add_parser("audit-copy",
+                             help="copy verified checksum jobs to /project/k03/<aimcr>/audit (login node)")
+    p_audit.add_argument("aimcr",         metavar="AIMCR", nargs="?")
+    p_audit.add_argument("artifact_name", metavar="NAME",  nargs="?")
+    p_audit.add_argument("--pending", action="store_true",
+                         help="every verified job whose audit copy is missing or outdated")
+    p_audit.add_argument("--force", action="store_true", help="copy again even if up to date")
+
     # ── HPC subcommand ────────────────────────────────────────────────────────
 
     p_hpc = sub.add_parser("hpc", help="HPC pipeline (ticket-driven transfer) commands")
@@ -804,6 +853,7 @@ _HPC_AI_DISPATCH = {
     "edit":      cmd_edit,
     "sync":      cmd_sync,
     "delete":    cmd_delete,
+    "audit-copy": cmd_audit_copy,
 }
 
 _HPC_DISPATCH = {
