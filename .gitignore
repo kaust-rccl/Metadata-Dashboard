@@ -1,0 +1,7 @@
+# Python bytecode caches — any directory level
+__pycache__/
+*.py[cod]
+
+# Package init files — any directory level. The app imports modules by path
+# (namespace packages), so these are not needed in the repository.
+__init__.py
