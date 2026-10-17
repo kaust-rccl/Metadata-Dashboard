@@ -87,7 +87,7 @@ class ArtifactModLog:
         When a BLOCKED status advances to STAGED or MOVED, the latest
         status_reason entry is propagated automatically.
         """
-        if action in (Action.STAGED, Action.UPDATED):
+        if action in (Action.STAGED, Action.UPDATED, Action.PREPARED):
             return yml.curation_notes
 
         if action == Action.MOVED:

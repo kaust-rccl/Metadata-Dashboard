@@ -235,7 +235,7 @@ class ArtifactYML:
         if not self.tracking_ticket.strip():
             errors.append("Tracking ticket is required.")
         if not self.dm_ticket_number.strip():
-            errors.append("DM ticket number is required (gate field).")
+            errors.append("DM ticket number is required to mark the artifact staged.")
         if not self.source_path.strip():
             errors.append("Source path is required.")
         if not self.destination_path.strip():
@@ -245,6 +245,23 @@ class ArtifactYML:
         if self.size_gb <= 0:
             errors.append("Size must be greater than 0 GB.")
 
+        return errors
+
+    def validate_preparing_fields(self) -> list[str]:
+        """
+        Minimum to create a record in PREPARING status — enough to place it
+        on disk and run a checksum job. Everything else (DM ticket included)
+        is required later, when the record is marked staged.
+        """
+        import re
+        from config import AIMCR_REFERENCE_PATTERN
+        errors: list[str] = []
+        if not self.artifact_name.strip():
+            errors.append("Artifact name is required.")
+        if not re.fullmatch(AIMCR_REFERENCE_PATTERN, self.aimcr_reference.strip()):
+            errors.append("AIMCR reference (6####) is required.")
+        if not self.source_path.strip():
+            errors.append("Source path is required.")
         return errors
 
     def validate_moving_fields(self) -> list[str]:

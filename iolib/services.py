@@ -174,21 +174,35 @@ class CurationService(_BaseService):
     """
     Handles first save of a new artifact by the curator.
     Creates the type-bucketed YML, modlog, and appends to the manifest.
+
+    target=Status.PREPARING creates the record before staging is complete:
+    only name / type / AIMCR reference / source path are required, so the
+    record (YML + DB) exists while a checksum job runs and the DM ticket is
+    requested. MarkStagedService moves it to STAGED once a ticket exists.
     """
 
-    def execute(self, yml: ArtifactYML, actor: str, db) -> ServiceResult:
-        errors = yml.validate_curation_fields()
+    def execute(
+        self, yml: ArtifactYML, actor: str, db, target: Status = Status.STAGED,
+    ) -> ServiceResult:
+        if target not in (Status.STAGED, Status.PREPARING):
+            return ServiceResult.fail([f"Cannot create a record in status '{target.value}'."])
+        errors = (yml.validate_preparing_fields() if target == Status.PREPARING
+                  else yml.validate_curation_fields())
         if errors:
             return ServiceResult.fail(errors)
 
+        yml_p, ml_p = self._paths(yml)
+        if yml_p.exists():
+            return ServiceResult.fail([
+                f"A record already exists at {yml_p}. Open it from the list instead."
+            ])
+
         now = datetime.now(tz=timezone.utc)
         yml.curated_by             = actor
-        yml.date_staged            = now
         yml.metadata_creation_date = now
-        yml.status                 = Status.STAGED
+        yml.date_staged            = now if target == Status.STAGED else None
+        yml.status                 = target
         self._touch(yml, actor)
-
-        yml_p, ml_p = self._paths(yml)
 
         try:
             save_artifact_yml(yml_p, yml)
@@ -196,11 +210,70 @@ class CurationService(_BaseService):
             return ServiceResult.fail([f"Failed to write YML: {exc}"])
 
         db_warning = self._sync_db(db, yml, yml_p, ml_p)
-        self._write_modlog(yml, actor, Role.CURATOR, Action.STAGED, ml_p)
+        action = Action.STAGED if target == Status.STAGED else Action.PREPARED
+        self._write_modlog(yml, actor, Role.CURATOR, action, ml_p)
         self._update_manifest(yml, yml_p, append=True)
 
+        verb = "staged" if target == Status.STAGED else "saved as preparing"
+        return self._ok(f"Artifact '{yml.artifact_name}' {verb}.", db_warning)
+
+
+# ── MarkStagedService ─────────────────────────────────────────────────────────
+
+class MarkStagedService(_BaseService):
+    """
+    PREPARING → STAGED. The DM ticket number is the gate: the full curation
+    validation runs, including dm_ticket_number. `updates` lets the caller
+    supply the ticket (and any other field) in the same step.
+    """
+
+    def execute(self, yml: ArtifactYML, actor: str, role: Role, db,
+                updates: dict | None = None) -> ServiceResult:
+        if yml.status != Status.PREPARING:
+            return ServiceResult.fail([f"Only a 'preparing' record can be marked staged "
+                                       f"(this one is '{yml.status.value}')."])
+        allowed = ALLOWED_TRANSITIONS.get((Status.PREPARING, role), set())
+        if Status.STAGED not in allowed:
+            return ServiceResult.fail([f"Role '{role.value}' cannot mark records staged."])
+
+        yml_p, ml_p = self._paths(yml)
+        before = load_artifact_yml(yml_p)
+        for field, value in (updates or {}).items():
+            if not hasattr(yml, field):
+                return ServiceResult.fail([f"Unknown field: '{field}'"])
+            setattr(yml, field, value.strip() if isinstance(value, str) else value)
+
+        # A portal checksum job knows which checksum file was verified.
+        if not yml.checksum_filename.strip():
+            try:
+                from iolib.checksum_jobs import job_dir_for, load_job
+                job = load_job(job_dir_for(yml))
+                if job and job.get("checksum_file"):
+                    yml.checksum_filename = job["checksum_file"]
+            except Exception:
+                pass
+
+        errors = yml.validate_curation_fields()
+        if errors:
+            return ServiceResult.fail(errors)
+
+        yml.status      = Status.STAGED
+        yml.date_staged = datetime.now(tz=timezone.utc)
+        self._touch(yml, actor)
+        note = self._diff_note(before, yml, set((updates or {}).keys()) | {"status"})
+
+        try:
+            save_artifact_yml(yml_p, yml)
+        except OSError as exc:
+            return ServiceResult.fail([f"Failed to write YML: {exc}"])
+
+        db_warning = self._sync_db(db, yml, yml_p, ml_p)
+        self._write_modlog(yml, actor, role, Action.STAGED, ml_p,
+                           note=f"marked staged (DM ticket {yml.dm_ticket_number}); {note}")
+        self._update_manifest(yml, yml_p, append=False)
         return self._ok(
-            f"Artifact '{yml.artifact_name}' staged successfully.", db_warning
+            f"Artifact '{yml.artifact_name}' marked staged (DM ticket {yml.dm_ticket_number}).",
+            db_warning,
         )
 
 

@@ -106,6 +106,16 @@ CREATE INDEX IF NOT EXISTS idx_modlog_yml
     ON modlog_entries(yml_path);
 CREATE INDEX IF NOT EXISTS idx_modlog_actor
     ON modlog_entries(actor);
+
+-- Editable DM-ticket text per artifact. Portal state only: never written to
+-- the YML (the YML stays the curated record; this is a working draft).
+CREATE TABLE IF NOT EXISTS ticket_drafts (
+    yml_path   TEXT PRIMARY KEY,
+    subject    TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL DEFAULT '',
+    updated_at TEXT,
+    updated_by TEXT
+);
 """
 
 
@@ -566,6 +576,10 @@ class Database:
                     "UPDATE modlog_entries SET yml_path = ?, artifact_name = ? WHERE yml_path = ?",
                     (new_s, artifact_name, old_s),
                 )
+                self._conn.execute(
+                    "UPDATE OR IGNORE ticket_drafts SET yml_path = ? WHERE yml_path = ?",
+                    (new_s, old_s),
+                )
 
     def repoint_artifact(
         self, old_yml_path: str, new_yml_path: Path, new_modlog_path: Path
@@ -608,7 +622,31 @@ class Database:
             ).fetchone()[0]
             if not left:
                 self._conn.execute("DELETE FROM modlog_entries WHERE yml_path = ?", (yml_path,))
+                self._conn.execute("DELETE FROM ticket_drafts WHERE yml_path = ?", (yml_path,))
             return n
+
+    # ── ticket drafts (portal-only, not in the YML) ───────────────────────────
+
+    def get_ticket_draft(self, yml_path: str) -> Optional[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT * FROM ticket_drafts WHERE yml_path = ?", (str(yml_path),)
+        ).fetchone()
+
+    def save_ticket_draft(self, yml_path: str, subject: str, body: str, actor: str) -> None:
+        from datetime import datetime, timezone
+        now = datetime.now(tz=timezone.utc).isoformat()
+        with self._tx():
+            n = self._conn.execute(
+                "UPDATE ticket_drafts SET subject=?, body=?, updated_at=?, updated_by=? "
+                "WHERE yml_path=?", (subject, body, now, actor, str(yml_path))).rowcount
+            if not n:
+                self._conn.execute(
+                    "INSERT INTO ticket_drafts (yml_path, subject, body, updated_at, updated_by) "
+                    "VALUES (?,?,?,?,?)", (str(yml_path), subject, body, now, actor))
+
+    def delete_ticket_draft(self, yml_path: str) -> None:
+        with self._tx():
+            self._conn.execute("DELETE FROM ticket_drafts WHERE yml_path = ?", (str(yml_path),))
 
     # ── modlog operations ─────────────────────────────────────────────────────
 

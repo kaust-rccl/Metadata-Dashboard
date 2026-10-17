@@ -48,6 +48,14 @@ def _startup(db: Database) -> None:
         report = SyncReport(errors=[f"sync aborted: {exc}"])
     st.session_state["_sync_report"] = report
 
+    # Checksum jobs that finished while nobody had the record open: tick the
+    # CPUP checksum box for every one that verified all files OK.
+    try:
+        from iolib.checksum_jobs import refresh_pending
+        st.session_state["_checksum_applied"] = refresh_pending(db)
+    except Exception as exc:
+        st.session_state["_checksum_applied"] = [f"checksum refresh failed: {exc}"]
+
 
 def _sidebar_db_health() -> None:
     problems = st.session_state.get("_db_problems") or []
@@ -60,6 +68,15 @@ def _sidebar_db_health() -> None:
         )
         with st.sidebar.expander("integrity details"):
             for line in problems[:20]:
+                st.caption(line)
+
+
+def _sidebar_checksum_status() -> None:
+    applied = st.session_state.get("_checksum_applied") or []
+    if applied:
+        st.sidebar.success(f"{len(applied)} checksum job(s) verified since last visit.")
+        with st.sidebar.expander("Checksum details"):
+            for line in applied:
                 st.caption(line)
 
 
@@ -139,6 +156,7 @@ def main() -> None:
 
     _sidebar_db_health()
     _sidebar_sync_status()
+    _sidebar_checksum_status()
 
     # Navigation hint — links are rendered by auth.session._render_sidebar
     st.sidebar.caption("Navigate using the pages above.")

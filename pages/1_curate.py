@@ -8,6 +8,9 @@ Responsibilities:
 - Edit curation_notes on existing staged artifact (CurationUpdateService)
 - Block / reject / reinstate actions (BlockService, RejectService, ReinstateService)
 - Delete a record (DeleteService)
+- Save a record as "preparing" (no DM ticket yet), run and monitor the CPUP
+  checksum job, get the DM-ticket text, then mark it staged
+  (components.staging_panels)
 - Project fields (title, k####, PI) auto-filled from the project profile
   once the AIMCR reference is known (iolib.projects)
 
@@ -32,6 +35,9 @@ from config import (
     Role, Status,
 )
 from iolib.database import Database
+from components.staging_panels import (
+    render_checksum_panel, render_mark_staged, render_ticket_panel,
+)
 from iolib.projects import fill_blanks, get_project_profile
 from iolib.services import (
     BlockService, CurationService, CurationUpdateService, DeleteService,
@@ -159,9 +165,10 @@ def _render_new_artifact_form(actor: str, db: Database) -> None:
 
         section_header("Curation")
         dm_ticket = st.text_input(
-            "DM ticket number (RT) *",
+            "DM ticket number (RT)",
             value=_ss("dm_ticket_number"),
-            help="Required before saving. Open the RT ticket first.",
+            help="Needed to stage. Without it, use \"Save as preparing\": run the "
+                 "checksum job and get the ticket text first, then mark it staged.",
         )
 
         c1, c2 = st.columns(2)
@@ -201,11 +208,16 @@ def _render_new_artifact_form(actor: str, db: Database) -> None:
         section_header("Notes")
         curation_notes = st.text_area("Curation notes", height=80)
 
-        submitted = st.form_submit_button("Stage artifact", type="primary")
+        st.caption("**Save as preparing** needs only name, type, AIMCR reference and source "
+                   "path. **Stage artifact** needs every field marked *, including the DM ticket.")
+        b1, b2, _ = st.columns([1, 1, 2])
+        prepare = b1.form_submit_button("Save as preparing")
+        stage   = b2.form_submit_button("Stage artifact", type="primary")
 
-    if submitted:
-        if not dm_ticket.strip():
-            st.error("DM ticket number is required before saving.")
+    if prepare or stage:
+        if stage and not dm_ticket.strip():
+            st.error("A DM ticket number is needed to stage. Use \"Save as preparing\" "
+                     "to create the record now and stage it once the ticket exists.")
             return
 
         yml = ArtifactYML(
@@ -233,10 +245,17 @@ def _render_new_artifact_form(actor: str, db: Database) -> None:
             curation_notes=curation_notes.strip(),
         )
 
-        result = CurationService().execute(yml, actor=actor, db=db)
+        target = Status.STAGED if stage else Status.PREPARING
+        result = CurationService().execute(yml, actor=actor, db=db, target=target)
         if result.success:
             st.success(result.message)
-            st.balloons()
+            if target == Status.PREPARING:
+                from config import artifact_yml_path
+                st.session_state["cur_selected_yml"] = str(artifact_yml_path(
+                    yml.aimcr_reference, yml.artifact_name, yml.artifact_type))
+                st.info("Open the **Existing artifacts** tab to submit the checksum job.")
+            else:
+                st.balloons()
             # Clear auto-fill session state after successful save
             for k in ["artifact_name", "artifact_type", "artifact_version",
                       "aimcr_reference", "size_gb", "checksum_filename",
@@ -451,8 +470,15 @@ def _render_artifact_detail(
             )
 
 
+    # ── staging: checksum job, ticket text, mark staged ────────────────────
+    if yml.status in (Status.PREPARING, Status.STAGED, Status.BLOCKED):
+        render_checksum_panel(yml, yml_path, actor, db)
+    if yml.status in (Status.PREPARING, Status.STAGED):
+        render_ticket_panel(yml, yml_path, actor, db)
+    render_mark_staged(yml, yml_path, actor, role, db)
+
     # ── block / reject / reinstate ─────────────────────────────────────────
-    if yml.status in (Status.STAGED, Status.BLOCKED, Status.REJECTED):
+    if yml.status in (Status.PREPARING, Status.STAGED, Status.BLOCKED, Status.REJECTED):
         with st.expander("Actions", expanded=True):
             section_header("Curator actions", color="#BA7517")
 

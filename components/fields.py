@@ -155,6 +155,7 @@ def section_header(title: str, color: str = "#1D9E75") -> None:
 def status_badge(status: Status) -> str:
     """Return an HTML badge for a status value."""
     colors = {
+        Status.PREPARING: ("#2B6CB0", "#E6F0FA"),
         Status.STAGED:   ("#1D9E75", "#E1F5EE"),
         Status.MOVED:    ("#534AB7", "#EEEDFE"),
         Status.BLOCKED:  ("#BA7517", "#FAEEDA"),

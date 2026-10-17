@@ -147,3 +147,29 @@ Every YML, modlog, manifest and lock file the app creates gets group `k03`
 (`FILE_GROUP` in `config.py`) and `u+rwx,g+rwx`; every directory it creates
 gets the same plus setgid, so files created inside later inherit the group.
 Bits are only added. Existing files are fixed when they are next rewritten.
+## Preparing → staged, with a portal checksum job
+
+**Save as preparing** (Curate → New artifact) creates the record — YML, DB
+row, manifest entry — with only name, type, AIMCR reference and source path.
+No DM ticket is needed yet, so the record survives app restarts while the
+checksum runs. Open it from *Existing artifacts*:
+
+1. **Checksum verification job (CPUP)** — the checksum file is suggested from
+   the source path (`checksum.sha256`, other `*.sha256`/`*.md5`, two levels
+   down at most). Submitting creates
+   `support_team/<6####>/verify_checksum/<datasets|models|software>/<name>/`
+   (group k03, setgid), copies `VERIFY_SCRIPT` into it and runs `sbatch` with
+   umask 002 so everything the job writes is group read-write. Resubmission on
+   time-out is on by default. Progress is read from the script's own state
+   files and logs, so monitoring works after a restart, inside the container,
+   and across resubmitted jobs. When every file is OK the CPUP checksum box is
+   ticked automatically (on opening the record, and at every app start).
+   Where `sbatch` is not available, the exact command to run is shown instead.
+2. **DM ticket text** — once the checksum is verified: a suggested subject and
+   body from the template, editable and saved per artifact in the DB
+   (`ticket_drafts`), never in the YML.
+3. **Mark as staged** — needs the DM ticket number and complete curation fields.
+
+**Stage artifact** in the form still stages directly when the ticket already
+exists. The Move page lists staged artifacts only, so preparing records never
+reach movers.

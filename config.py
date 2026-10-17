@@ -53,6 +53,28 @@ LDAP_GROUP_MOVER: str   = "k02"
 FILE_GROUP: str = "k03"
 
 
+# ── checksum verification jobs (portal-submitted) ─────────────────────────────
+# Canonical resumable verify script; copied into each job directory at
+# submission so a run keeps the exact script it started with.
+VERIFY_SCRIPT: Path = Path("/scratch/project/k03/support_team/checksum-verify/generic_verify.slurm")
+VERIFY_DIR_NAME: str = "verify_checksum"   # PROJECTS_BASE/<6####>/verify_checksum/
+# umask for sbatch; Slurm applies the submitting umask to the job, so every
+# file the job writes is group read-write (group k03 comes from setgid dirs).
+VERIFY_UMASK: int = 0o002
+# Checksum file names tried first when suggesting one inside a source path.
+CHECKSUM_CANDIDATE_NAMES: tuple[str, ...] = (
+    "checksum.sha256", "checksums.sha256", "SHA256SUMS", "sha256sums.txt",
+    "checksum.md5", "md5sum.txt", "MD5SUMS", "checksum.sha512",
+)
+CHECKSUM_SUFFIXES: tuple[str, ...] = (".sha256", ".sha512", ".sha1", ".md5")
+
+
+def verify_job_dir(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name: str) -> Path:
+    """PROJECTS_BASE/<6####>/verify_checksum/<datasets|models|software>/<name>/"""
+    return (proposal_dir(aimcr_reference) / VERIFY_DIR_NAME
+            / ARTIFACT_TYPE_DIR[artifact_type] / artifact_name)
+
+
 # ── superusers ────────────────────────────────────────────────────────────────
 # Usernames listed here resolve to Role.ADMIN regardless of group membership.
 # ADMIN bypasses every require_role() guard and holds the union of the
@@ -130,6 +152,7 @@ class Status(str, Enum):
     Artifact lifecycle status.
     Transitions enforced by the app — never written freehand.
     """
+    PREPARING = "preparing"   # record exists, staging in progress (checksum, ticket)
     STAGED   = "staged"
     MOVED    = "moved"
     BLOCKED  = "blocked"
@@ -150,6 +173,7 @@ class Action(str, Enum):
     REJECTED = "rejected"
     UPDATED  = "updated"
     DELETED  = "deleted"   # record removed via DeleteService; sync honours it
+    PREPARED = "prepared"  # record created in PREPARING status
 
 
 class ChecksumType(str, Enum):
@@ -167,6 +191,9 @@ class ChecksumSource(str, Enum):
 # Enforced by the app layer — never bypassed.
 
 ALLOWED_TRANSITIONS: dict[tuple[Status, Role], set[Status]] = {
+    # PREPARING → STAGED only through MarkStagedService (needs a DM ticket)
+    (Status.PREPARING, Role.CURATOR): {Status.STAGED, Status.REJECTED},
+    (Status.PREPARING, Role.ADMIN):   {Status.STAGED, Status.REJECTED},
     (Status.STAGED,   Role.CURATOR): {Status.BLOCKED,  Status.REJECTED},
     (Status.BLOCKED,  Role.CURATOR): {Status.STAGED,   Status.REJECTED},
     (Status.REJECTED, Role.CURATOR): {Status.STAGED},
