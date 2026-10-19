@@ -12,6 +12,7 @@ HPC-AI pipeline commands (operate on AIMCR artifacts):
   dashboard sync [--dry-run] [--verbose] [--json]
   dashboard delete <aimcr> <name> <reason> [--yes]
   dashboard audit-copy <aimcr> <name> | --pending   (run on a login node)
+  dashboard db-clean [--apply]   remove DB rows created from YMLs that are not ours
 
 HPC pipeline commands (operate on ticket-driven transfers):
   dashboard hpc list [--status --ticket --json]
@@ -420,6 +421,50 @@ def cmd_audit_copy(args: argparse.Namespace) -> None:
     sys.exit(1 if failed else 0)
 
 
+def cmd_db_clean(args: argparse.Namespace) -> None:
+    """Dry run by default; --apply backs up the DB, then deletes. Files untouched."""
+    from iolib import db_clean
+    db = _db()
+    plan = db_clean.plan(db)
+
+    labels = {"foreign": "file is not an artifact record",
+              "no_identity": "no name / AIMCR reference, file missing"}
+    if plan.remove:
+        bold(f"Rows to remove ({len(plan.remove)})")
+        for cat in ("foreign", "no_identity"):
+            items = [f for f in plan.remove if f.category == cat]
+            if items:
+                print(f"  {labels[cat]} ({len(items)}):")
+                for f in items[: None if args.verbose else 15]:
+                    print(f"    row {f.rowid:<6} {f.name or '(no name)':<28} {f.yml_path}")
+                    if args.verbose:
+                        dim(f"           {f.reason}")
+                if len(items) > 15 and not args.verbose:
+                    dim(f"    … {len(items) - 15} more (--verbose lists all)")
+    if plan.orphan_projects:
+        bold(f"Project rows to remove ({len(plan.orphan_projects)}): "
+             + ", ".join(repr(p) for p in plan.orphan_projects))
+    if plan.report:
+        bold(f"Kept, review by hand ({len(plan.report)})")
+        for f in plan.report:
+            warn(f"  row {f.rowid} {f.ref}/{f.name}: {f.reason}")
+    print(f"{plan.kept} row(s) are records to keep.")
+
+    if not (plan.remove or plan.orphan_projects):
+        ok("Nothing to clean.")
+        return
+    if not args.apply:
+        warn("Dry run — nothing changed. Re-run with --apply to delete the rows above.")
+        return
+    try:
+        bk, n_art, n_proj = db_clean.apply(db, plan)
+    except RuntimeError as exc:
+        err(str(exc))
+        sys.exit(1)
+    ok(f"Removed {n_art} artifact row(s) and {n_proj} project row(s). Backup: {bk}")
+    dim("No files were touched. Run `dashboard sync --dry-run` next.")
+
+
 # ── HPC pipeline commands ─────────────────────────────────────────────────────
 
 def cmd_hpc_list(args: argparse.Namespace) -> None:
@@ -786,6 +831,10 @@ HPC pipeline:
                          help="every verified job whose audit copy is missing or outdated")
     p_audit.add_argument("--force", action="store_true", help="copy again even if up to date")
 
+    p_clean = sub.add_parser("db-clean", help="remove DB rows created from YMLs that are not ours")
+    p_clean.add_argument("--apply", action="store_true", help="back up the DB, then delete")
+    p_clean.add_argument("--verbose", action="store_true", help="list every row with its reason")
+
     # ── HPC subcommand ────────────────────────────────────────────────────────
 
     p_hpc = sub.add_parser("hpc", help="HPC pipeline (ticket-driven transfer) commands")
@@ -854,6 +903,7 @@ _HPC_AI_DISPATCH = {
     "sync":      cmd_sync,
     "delete":    cmd_delete,
     "audit-copy": cmd_audit_copy,
+    "db-clean":  cmd_db_clean,
 }
 
 _HPC_DISPATCH = {

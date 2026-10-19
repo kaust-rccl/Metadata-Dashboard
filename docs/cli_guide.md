@@ -27,6 +27,8 @@ source ~/.bashrc
 | `dashboard reinstate <aimcr> <name> "<reason>"` | Reinstate blocked or rejected → `staged` |
 | `dashboard edit <aimcr> <name> field=value` | Edit mover fields: `destination_path`, `project_id`, `moving_notes`, `checksum_verified_gpup` |
 | `dashboard delete <aimcr> <name> "<reason>"` | Delete a record (YML, DB rows, manifest entry; data untouched). Asks for the name as confirmation unless `--yes`. Curator/admin only |
+| `dashboard db-clean [--apply]` | Remove DB rows that old versions created from YMLs that are not artifact records (env files, manifests, modlogs, legacy/HPC files) or that have no name/AIMCR reference. Dry run by default; `--apply` backs up the DB first. Never touches files |
+| `dashboard audit-copy <aimcr> <name>` / `--pending` | Copy verified checksum jobs to `/project/k03/<aimcr>/audit/...` — run on a login node |
 | `dashboard sync` | Two-way sync: DB rows with no YML get one, YMLs with no DB row get one. `--dry-run` reports only; `--verbose` also lists ignored files; `--json`. Exits 1 if anything needs attention |
 
 Every write updates the YML on disk, the database, the modlog (with a diff), and the manifest.
