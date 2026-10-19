@@ -226,6 +226,11 @@ class ArtifactYML:
 
         if not self.artifact_name.strip():
             errors.append("Artifact name is required.")
+        else:
+            from config import artifact_name_problem
+            problem = artifact_name_problem(self.artifact_name)
+            if problem:
+                errors.append(problem[0].upper() + problem[1:] + ".")
         if not self.project_id.strip():
             errors.append("Project ID is required.")
         if not self.pi_username.strip():
@@ -258,6 +263,11 @@ class ArtifactYML:
         errors: list[str] = []
         if not self.artifact_name.strip():
             errors.append("Artifact name is required.")
+        else:
+            from config import artifact_name_problem
+            problem = artifact_name_problem(self.artifact_name)
+            if problem:
+                errors.append(problem[0].upper() + problem[1:] + ".")
         if not re.fullmatch(AIMCR_REFERENCE_PATTERN, self.aimcr_reference.strip()):
             errors.append("AIMCR reference (6####) is required.")
         if not self.source_path.strip():

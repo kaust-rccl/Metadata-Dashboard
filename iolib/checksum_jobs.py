@@ -6,7 +6,7 @@ generic_verify.slurm script.
 
 Layout, one directory per artifact:
 
-    PROJECTS_BASE/<6####>/<datasets|models|software>/<name>/verify_checksum/
+    STAGING_BASE/<6####>/<datasets|models|software>/<name>/verify_checksum/
         generic_verify.slurm   copy of VERIFY_SCRIPT taken at submission
         job.yml                our record: checksum file, data dir, submissions
         logs/<jobname>_<id>.out   written by Slurm (one per job, incl. resubmits)

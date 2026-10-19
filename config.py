@@ -8,6 +8,7 @@ To add a new enum value, add it here and nowhere else.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 
@@ -29,14 +30,29 @@ from pathlib import Path
 #   └── Metadata_Dashboard/
 #       └── tracker.db
 
+# STAGING_BASE  — staged DATA (scratch; compute nodes can write there):
+#                 checksum jobs run in <6####>/<type>/<name>/verify_checksum.
+# PROJECTS_BASE — METADATA records (<6####>/<type>/<name>.yml, manifests,
+#                 modlogs); sync's single canonical location for records.
 STAGING_BASE:  Path = Path("/scratch/project/k03/support_team/")
-PROJECTS_BASE: Path = Path("/scratch/project/k03/support_team/")
+PROJECTS_BASE: Path = Path("/project/k03/")
 DB_PATH:       Path = Path(
-    "/scratch/project/k03/support_team/mock_db/tracker.db"
+    "/project/k03/Metadata_Dashboard/tracker.db"
 )
 
 # Resolved at import time so all modules share the same object
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+# What the dashboard does at the start of every session:
+#   "apply"   — two-way YML ↔ DB sync, and apply finished checksum jobs
+#   "dry-run" — compute the sync report and show it, write nothing
+#   "off"     — nothing; run `dashboard sync` by hand
+# Use "dry-run" or "off" for a test checkout pointed at the real DB and
+# records tree, so opening it does not change production.
+# Set per checkout at launch, so config.py is identical everywhere:
+#   DART_STARTUP_SYNC=dry-run python -m streamlit run app.py   (test checkout)
+STARTUP_SYNC: str = os.environ.get("DART_STARTUP_SYNC", "apply")
 
 
 # ── LDAP / system group names ─────────────────────────────────────────────────
@@ -57,7 +73,7 @@ FILE_GROUP: str = "k03"
 # Canonical resumable verify script; copied into each job directory at
 # submission so a run keeps the exact script it started with.
 VERIFY_SCRIPT: Path = Path("/scratch/project/k03/support_team/checksum-verify/generic_verify.slurm")
-VERIFY_DIR_NAME: str = "verify_checksum"   # PROJECTS_BASE/<6####>/verify_checksum/
+VERIFY_DIR_NAME: str = "verify_checksum"   # STAGING_BASE/<6####>/<type>/<name>/verify_checksum/
 # umask for sbatch; Slurm applies the submitting umask to the job, so every
 # file the job writes is group read-write (group k03 comes from setgid dirs).
 VERIFY_UMASK: int = 0o002
@@ -70,8 +86,13 @@ CHECKSUM_SUFFIXES: tuple[str, ...] = (".sha256", ".sha512", ".sha1", ".md5")
 
 
 def verify_job_dir(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name: str) -> Path:
-    """PROJECTS_BASE/<6####>/<datasets|models|software>/<name>/verify_checksum/"""
-    return (proposal_dir(aimcr_reference) / ARTIFACT_TYPE_DIR[artifact_type]
+    """
+    STAGING_BASE/<6####>/<datasets|models|software>/<name>/verify_checksum/
+
+    With the staged data on scratch — never under PROJECTS_BASE, which may be
+    /project (metadata records), where compute nodes cannot write.
+    """
+    return (STAGING_BASE / aimcr_reference / ARTIFACT_TYPE_DIR[artifact_type]
             / artifact_name / VERIFY_DIR_NAME)
 
 
@@ -90,9 +111,9 @@ def audit_dir(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name
 
 
 def verify_job_dir_legacy(aimcr_reference: str, artifact_type: "ArtifactType", artifact_name: str) -> Path:
-    """Earlier layout, PROJECTS_BASE/<6####>/verify_checksum/<type>/<name>/ —
+    """Earlier layout, STAGING_BASE/<6####>/verify_checksum/<type>/<name>/ —
     still monitored (and resumed) for jobs submitted there."""
-    return (proposal_dir(aimcr_reference) / VERIFY_DIR_NAME
+    return (STAGING_BASE / aimcr_reference / VERIFY_DIR_NAME
             / ARTIFACT_TYPE_DIR[artifact_type] / artifact_name)
 
 
@@ -128,6 +149,26 @@ AIMCR_REFERENCE_PATTERN: str = r"6\d{4,}"
 # Suffix sync gives to a DB row whose (aimcr_reference, type, name) collides
 # with another record: <name>_dup2, <name>_dup3, ...
 DUPLICATE_SUFFIX: str = "_dup"
+
+def artifact_name_problem(name: str) -> "str | None":
+    """
+    Why `name` cannot be an artifact name, or None. The name becomes a file
+    name (<name>.yml) and a directory name (verify_checksum, audit), so it
+    must be a single safe path component — no "/" as in Hugging Face ids
+    ("org/model"): use "org_model" or just "model" instead.
+    """
+    if not name or not name.strip():
+        return "artifact name is empty"
+    if name != name.strip():
+        return "artifact name has leading or trailing spaces"
+    if "/" in name or "\\" in name:
+        return f"artifact name {name!r} contains '/' — use e.g. {name.replace('/', '_')!r}"
+    if name in (".", "..") or name.startswith("."):
+        return f"artifact name {name!r} cannot start with '.'"
+    if "\0" in name or name.endswith(".modlog"):
+        return f"artifact name {name!r} is not usable as a file name"
+    return None
+
 
 # Our artifact YMLs are a few KB. Anything larger is not read at all.
 MAX_ARTIFACT_YML_BYTES: int = 256 * 1024

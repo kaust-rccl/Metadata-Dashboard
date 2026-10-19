@@ -270,15 +270,10 @@ def _placement_problem(key: Key) -> Optional[str]:
         ArtifactType(atype)
     except ValueError:
         return f"unrecognised artifact_type {atype!r}"
-    if (
-        not name
-        or name != name.strip()
-        or name in (".", "..")
-        or name.startswith(".")
-        or any(c in name for c in "/\\\0")
-        or name.endswith(MODLOG_SUFFIX.removesuffix(".yml"))
-    ):
-        return f"artifact_name {name!r} is not usable as a file name"
+    from config import artifact_name_problem
+    problem = artifact_name_problem(name)
+    if problem:
+        return problem
     return None
 
 
@@ -421,10 +416,13 @@ def _dedupe(
             else:
                 # strip an existing _dupN so repeat splits count on (x_dup3),
                 # never stack (x_dup2_dup2)
-                stem = re.sub(rf"{re.escape(DUPLICATE_SUFFIX)}\d+$", "", name) or name
+                # keep a file extension at the end: x.sif → x_dup2.sif, not
+                # x.sif_dup2 ("Qwen2.5-7B" has no extension and is left whole)
+                m = re.match(rf"^(.*?)(?:{re.escape(DUPLICATE_SUFFIX)}\d+)?(\.[A-Za-z][A-Za-z0-9]{{0,4}})?$", name)
+                stem, ext = (m.group(1) or name), (m.group(2) or "")
                 n = 2
                 while True:
-                    new_name = f"{stem}{DUPLICATE_SUFFIX}{n}"
+                    new_name = f"{stem}{DUPLICATE_SUFFIX}{n}{ext}"
                     cand = (ref, atype, new_name)
                     if (new_name not in used.get((ref, atype), set())
                             and _placement_problem(cand) is None

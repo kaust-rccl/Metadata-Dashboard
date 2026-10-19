@@ -34,22 +34,30 @@ st.set_page_config(
 
 def _startup(db: Database) -> None:
     """
-    One-time-per-session startup tasks.
-    Currently: two-way sync between artifact YMLs and the DB — YMLs missing
-    from the DB are mirrored in, DB rows with no YML get one written at the
-    canonical path. YAML files that are not ours are never parsed.
-    A failure here must never stop the app from loading.
+    One-time-per-session startup tasks, governed by config.STARTUP_SYNC:
+    two-way sync between artifact YMLs and the DB, then applying finished
+    checksum jobs. A failure here must never stop the app from loading.
     """
+    import config
+    mode = getattr(config, "STARTUP_SYNC", "apply")
     st.session_state["_db_problems"] = db.quick_check()
+    st.session_state["_startup_mode"] = mode
+    if mode == "off":
+        st.session_state["_sync_report"] = None
+        st.session_state["_checksum_applied"] = []
+        return
 
     try:
-        report = sync(db, PROJECTS_BASE, actor="SYSTEM")
+        report = sync(db, PROJECTS_BASE, actor="SYSTEM", dry_run=(mode == "dry-run"))
     except Exception as exc:   # defensive — sync collects per-record errors itself
         report = SyncReport(errors=[f"sync aborted: {exc}"])
     st.session_state["_sync_report"] = report
 
+    if mode != "apply":
+        st.session_state["_checksum_applied"] = []
+        return
     # Checksum jobs that finished while nobody had the record open: tick the
-    # CPUP checksum box for every one that verified all files OK.
+    # CPUP checksum box / make the audit copy for every one verified OK.
     try:
         from iolib.checksum_jobs import refresh_pending
         st.session_state["_checksum_applied"] = refresh_pending(db)
@@ -81,8 +89,20 @@ def _sidebar_checksum_status() -> None:
 
 
 def _sidebar_sync_status() -> None:
+    mode = st.session_state.get("_startup_mode", "apply")
+    if mode == "off":
+        st.sidebar.caption("Automatic sync is off (STARTUP_SYNC = \"off\").")
+        return
     report: SyncReport | None = st.session_state.get("_sync_report")
     if report is None:
+        return
+    if report.dry_run:
+        st.sidebar.info("Startup sync is in **dry-run** mode — nothing was written. "
+                        f"It would do: {report.summary().replace('[dry run] ', '')}", icon="🧪")
+        with st.sidebar.expander("What sync would change"):
+            for line in report.yml_created + [f"DB row from YML: {x}" for x in report.db_inserted] \
+                    + report.duplicates + report.conflicts + report.errors:
+                st.caption(line)
         return
     if report.locked:
         st.sidebar.caption("Sync skipped — another session was already syncing.")
