@@ -65,6 +65,28 @@ class ServiceResult:
 
 # ── base ──────────────────────────────────────────────────────────────────────
 
+def _coerce_field(yml, field: str, value):
+    """
+    Normalise a value before it is set on an ArtifactYML field.
+
+    - Plain text is stripped. Enum members are NOT: ChecksumType, Partition,
+      Status, ... are str-based enums, so isinstance(value, str) is true for
+      them and value.strip() returned a plain str — the YML writer then
+      failed on .value ("'str' object has no attribute 'value'").
+    - A field that currently holds an enum gets its value converted to that
+      enum, so a plain string from any caller cannot reach to_dict().
+    """
+    from enum import Enum
+    current = getattr(yml, field, None)
+    if isinstance(value, Enum):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if isinstance(current, Enum):
+            return type(current)(value)       # ValueError for an invalid value
+    return value
+
+
 class _BaseService:
     """Shared helpers for all service classes."""
 
@@ -241,15 +263,18 @@ class MarkStagedService(_BaseService):
         for field, value in (updates or {}).items():
             if not hasattr(yml, field):
                 return ServiceResult.fail([f"Unknown field: '{field}'"])
-            setattr(yml, field, value.strip() if isinstance(value, str) else value)
+            try:
+                setattr(yml, field, _coerce_field(yml, field, value))
+            except ValueError:
+                return ServiceResult.fail([f"Invalid value {value!r} for '{field}'."])
 
         # A portal checksum job knows which checksum file was verified.
         if not yml.checksum_filename.strip():
             try:
                 from iolib.checksum_jobs import job_dir_for, load_job
                 job = load_job(job_dir_for(yml))
-                if job and job.get("checksum_file"):
-                    yml.checksum_filename = job["checksum_file"]
+                if job and (job.get("original_checksum_file") or job.get("checksum_file")):
+                    yml.checksum_filename = job.get("original_checksum_file") or job["checksum_file"]
             except Exception:
                 pass
 
@@ -308,9 +333,10 @@ class CurationUpdateService(_BaseService):
         for field, value in updated_fields.items():
             if not hasattr(yml, field):
                 return ServiceResult.fail([f"Unknown field: '{field}'"])
-            if isinstance(value, str):
-                value = value.strip()
-            setattr(yml, field, value)
+            try:
+                setattr(yml, field, _coerce_field(yml, field, value))
+            except ValueError:
+                return ServiceResult.fail([f"Invalid value {value!r} for '{field}'."])
 
         self._touch(yml, actor)
         note = self._diff_note(before, yml, set(updated_fields.keys()))
@@ -574,10 +600,12 @@ class MovingUpdateService(_BaseService):
         before = load_artifact_yml(yml_p)
 
         for field, value in updated_fields.items():
-            if hasattr(yml, field):
-                setattr(yml, field, value)
-            else:
+            if not hasattr(yml, field):
                 return ServiceResult.fail([f"Unknown field: '{field}'"])
+            try:
+                setattr(yml, field, _coerce_field(yml, field, value))
+            except ValueError:
+                return ServiceResult.fail([f"Invalid value {value!r} for '{field}'."])
 
         self._touch(yml, actor)
 

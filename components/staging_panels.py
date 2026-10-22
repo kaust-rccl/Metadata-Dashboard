@@ -55,7 +55,9 @@ def render_checksum_panel(yml, yml_path: Path, actor: str, db) -> None:
             c[3].metric("Remaining", status.remaining if status.total else "—")
             jobs = ", ".join(f"{j} ({status.live[j].lower()})" if j in status.live else j
                              for j in status.job_ids) or "not submitted yet"
-            st.caption(f"Checksum file: `{status.checksum_file}`  \nJob(s): {jobs}  \n"
+            conv = (f" (verified via converted copy `{Path(status.checksum_file).name}`)"
+                    if status.checksum_file != status.original_checksum_file else "")
+            st.caption(f"Checksum file: `{status.original_checksum_file}`{conv}  \nJob(s): {jobs}  \n"
                        f"Job directory: `{status.job_dir}`")
             if status.result_line:
                 st.caption(status.result_line)
@@ -111,7 +113,8 @@ def _render_audit(yml, yml_path: Path, status) -> None:
 
 def _render_submit_form(yml, yml_path: Path, actor: str, db, status) -> None:
     section_header("Submit checksum job")
-    candidates = cj.suggest_checksum_files(yml.source_path, status.checksum_file or yml.checksum_filename)
+    candidates = cj.suggest_checksum_files(yml.source_path,
+                                           status.original_checksum_file or yml.checksum_filename)
     other = "Other path…"
     opts = candidates + [other]
     choice = st.selectbox(
@@ -120,7 +123,7 @@ def _render_submit_form(yml, yml_path: Path, actor: str, db, status) -> None:
     )
     if choice == other or not candidates:
         checksum_file = st.text_input("Checksum file path", key=_k(yml_path, "ck_path"),
-                                      value=status.checksum_file)
+                                      value=status.original_checksum_file)
     else:
         checksum_file = choice
     data_dir = st.text_input(
@@ -201,22 +204,76 @@ def render_ticket_panel(yml, yml_path: Path, actor: str, db) -> None:
 
 # ── mark staged ───────────────────────────────────────────────────────────────
 
+# Required-to-stage fields that can be filled in right in the panel, with
+# where they otherwise live in the detail view.
+_STAGE_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("dm_ticket_number", "DM ticket number (RT) *", "text"),
+    ("tracking_ticket",  "Tracking ticket (6####) *", "text"),
+    ("size_gb",          "Size (GB) *", "number"),
+    ("project_id",       "KAUST project ID (k####) *", "text"),
+    ("pi_username",      "PI username *", "text"),
+    ("destination_path", "Destination path *", "text"),
+    ("checksum_filename", "Checksum filename *", "text"),
+    ("source_path",      "Source path *", "text"),
+)
+
+
+def _missing(yml, field: str) -> bool:
+    v = getattr(yml, field)
+    return (v or 0) <= 0 if field == "size_gb" else not str(v or "").strip()
+
+
 def render_mark_staged(yml, yml_path: Path, actor: str, role: Role, db) -> None:
+    """
+    PREPARING → STAGED. Shows an input for the DM ticket and for every other
+    required field that is still empty in the saved record, so everything
+    can be completed here; the checklist reflects what is typed, and
+    "Mark as staged" saves those values and stages in one step.
+    """
     if yml.status != Status.PREPARING:
         return
+    import copy
+    from iolib.projects import get_project_profile
+
     with st.expander("Mark as staged", expanded=True):
-        st.caption("Needs the DM ticket number. All curation fields must be complete.")
-        ticket = st.text_input("DM ticket number (RT) *", value=yml.dm_ticket_number,
-                               key=_k(yml_path, "ms_ticket"))
-        missing = [e for e in yml.validate_curation_fields() if "DM ticket" not in e]
+        profile = get_project_profile(yml.aimcr_reference, db)
+        updates: dict = {}
+        shown = [f for f in _STAGE_FIELDS if f[0] == "dm_ticket_number" or _missing(yml, f[0])]
+        cols = st.columns(2)
+        for i, (field, label, kind) in enumerate(shown):
+            with cols[i % 2]:
+                if kind == "number":
+                    val = st.number_input(label, min_value=0.0, step=0.1, format="%.2f",
+                                          value=float(getattr(yml, field) or 0.0),
+                                          key=_k(yml_path, f"ms_{field}"))
+                else:
+                    default = getattr(yml, field) or profile.get(field, "")
+                    val = st.text_input(label, value=default, key=_k(yml_path, f"ms_{field}"))
+            updates[field] = val
+
+        # checklist against what is typed, not only what is saved
+        preview = copy.deepcopy(yml)
+        for f, v in updates.items():
+            setattr(preview, f, float(v) if f == "size_gb" else str(v).strip())
+        if not preview.checksum_filename.strip():
+            try:
+                job = cj.load_job(cj.job_dir_for(yml))
+                if job and (job.get("original_checksum_file") or job.get("checksum_file")):
+                    preview.checksum_filename = job.get("original_checksum_file") or job["checksum_file"]
+            except Exception:
+                pass
+        missing = preview.validate_curation_fields()
         if missing:
-            st.warning("Still to fill in (Curation fields above):  \n- " + "  \n- ".join(missing))
+            st.warning("Still needed before staging:  \n- " + "  \n- ".join(missing))
+        else:
+            st.success("Everything required is filled in.")
         if not yml.checksum_verified_cpup.verified:
             st.caption("The CPUP checksum is not verified yet.")
+
         if st.button("Mark as staged", key=_k(yml_path, "ms_apply"), type="primary",
-                     disabled=not ticket.strip() or bool(missing)):
-            res = MarkStagedService().execute(yml, actor, role, db,
-                                              updates={"dm_ticket_number": ticket.strip()})
+                     disabled=bool(missing)):
+            clean = {f: (float(v) if f == "size_gb" else str(v).strip()) for f, v in updates.items()}
+            res = MarkStagedService().execute(yml, actor, role, db, updates=clean)
             if res.success:
                 st.success(res.message)
                 st.rerun()

@@ -66,7 +66,8 @@ class JobStatus:
     state: str = "none"          # none | prepared | queued | running | running? |
                                  # ok | failed | incomplete | error
     job_dir: Optional[Path] = None
-    checksum_file: str = ""
+    checksum_file: str = ""            # what the job verifies (may be a converted copy)
+    original_checksum_file: str = ""   # what the user chose
     data_dir: str = ""
     submitted_by: str = ""
     job_ids: list[str] = field(default_factory=list)
@@ -212,25 +213,88 @@ def suggest_checksum_files(source_path: str, current: str = "", limit: int = 8,
     return out[:limit]
 
 
+# Manifest line formats accepted. GNU (what md5sum/sha*sum -c read) is used
+# as-is; the others are rewritten to GNU in a copy inside the job directory.
+_GNU_RE = re.compile(r"^([a-fA-F0-9]{32,128}) [ *](.+)$")                 # hash␣␣file / hash␣*file
+_TAB_RE = re.compile(r"^([a-fA-F0-9]{32,128})\t+(.+)$")                   # hash<TAB>file (NCBI)
+_BSD_RE = re.compile(r"^(?:MD5|SHA1|SHA224|SHA256|SHA384|SHA512) \((.+)\) = ([a-fA-F0-9]{32,128})$")
+_REV_RE = re.compile(r"^([a-fA-F0-9]{32,128}) ([^ *].*)$")                # hash␣file (md5 -r)
+_EXT_BY_LEN = {32: ".md5", 40: ".sha1", 56: ".sha224", 64: ".sha256", 96: ".sha384", 128: ".sha512"}
+
+
+def read_manifest(path: Path, limit: Optional[int] = None) -> tuple[list[tuple[str, str]], int, int, set[str]]:
+    """
+    Parse a checksum manifest in any accepted format.
+    Returns (entries [(hash, file)], nonblank, malformed, formats seen).
+    """
+    entries: list[tuple[str, str]] = []
+    nonblank = malformed = 0
+    formats: set[str] = set()
+    with path.open("r", errors="replace") as fh:
+        for i, raw in enumerate(fh):
+            if limit is not None and i >= limit:
+                break
+            line = raw.rstrip("\r\n")
+            if not line.strip():
+                continue
+            nonblank += 1
+            for fmt, rx, order in (("gnu", _GNU_RE, (1, 2)), ("tab", _TAB_RE, (1, 2)),
+                                   ("bsd", _BSD_RE, (2, 1)), ("md5 -r", _REV_RE, (1, 2))):
+                m = rx.match(line)
+                if m:
+                    entries.append((m.group(order[0]), m.group(order[1])))
+                    formats.add(fmt)
+                    break
+            else:
+                malformed += 1
+    return entries, nonblank, malformed, formats
+
+
 def check_checksum_file(path: str) -> tuple[bool, str]:
     """Quick sanity check of a manifest before submitting: (ok, message)."""
     p = Path(path)
     if not p.is_file():
         return False, f"{path} does not exist."
     try:
-        with p.open("r", errors="replace") as fh:
-            lines = [ln.rstrip("\r\n") for _, ln in zip(range(5000), fh)]
+        entries, nonblank, malformed, formats = read_manifest(p, limit=5000)
     except OSError as exc:
         return False, f"cannot read {path}: {exc}"
-    good = sum(1 for ln in lines if _LINE_RE.match(ln))
-    nonblank = sum(1 for ln in lines if ln.strip())
-    if good == 0:
+    if not entries:
         return False, (f"{p.name} has no line like '<hex-digest>  <file>' — corrupt, "
                        "empty, or an HTML error page?")
-    msg = f"{good} checksum line(s) found"
-    if good < nonblank:
-        msg += f"; {nonblank - good} malformed line(s) will be skipped"
+    lengths = {len(h) for h, _ in entries}
+    if len(lengths) > 1:
+        return False, f"{p.name} mixes digest lengths {sorted(lengths)} — one algorithm per file."
+    msg = f"{len(entries)} checksum line(s) found"
+    if malformed:
+        msg += f"; {malformed} malformed line(s) will be skipped"
+    other = formats - {"gnu"}
+    if other:
+        msg += (f" ({', '.join(sorted(other))} format — a converted copy is made in the job "
+                "directory; the original file is not changed)")
     return True, msg
+
+
+def _normalized_copy(jd: Path, original: Path) -> Optional[Path]:
+    """
+    If `original` is not plain GNU format, write a GNU-format copy into the
+    job directory and return its path; otherwise None. The copy is named by
+    digest length (.md5, .sha256, ...) so the verify script picks the right
+    tool whatever the original is called. Rewritten only when its content
+    changes, so a resubmission resumes the same state.
+    """
+    entries, _, _, formats = read_manifest(original)
+    if not entries or formats <= {"gnu"}:
+        return None
+    ext = _EXT_BY_LEN.get(len(entries[0][0]), ".txt")
+    dst = jd / f"{original.name}.normalized{ext}"
+    text = "".join(f"{h}  {f}\n" for h, f in entries)
+    if not dst.is_file() or dst.read_text(errors="replace") != text:
+        atomic = jd / f".{dst.name}.tmp"
+        atomic.write_text(text)
+        apply_group_rwx(atomic, directory=False)
+        os.replace(atomic, dst)
+    return dst
 
 
 # ── prepare / submit / cancel ─────────────────────────────────────────────────
@@ -259,8 +323,17 @@ def prepare_job(yml, checksum_file: str, data_dir: str, actor: str) -> tuple[Pat
             "artifact": f"{yml.aimcr_reference}/{yml.artifact_type.value}/{yml.artifact_name}",
             "submissions": [],
         }
-        job["checksum_file"] = os.path.realpath(checksum_file)
-        job["data_dir"] = os.path.realpath(data_dir) if data_dir.strip() else ""
+        original = Path(os.path.realpath(checksum_file))
+        normalized = _normalized_copy(jd, original)
+        job["original_checksum_file"] = str(original)
+        job["checksum_file"] = str(normalized or original)
+        if data_dir.strip():
+            job["data_dir"] = os.path.realpath(data_dir)
+        elif normalized:
+            # the copy lives in the job directory: the files are still next to the original
+            job["data_dir"] = str(original.parent)
+        else:
+            job["data_dir"] = ""
         job["prepared_by"] = actor
         job["prepared_at"] = datetime.now(tz=timezone.utc).isoformat()
         atomic_write(jd / JOB_FILE, job)
@@ -391,6 +464,7 @@ def job_status(yml) -> JobStatus:
 
     st.audit = job.get("audit") or {}
     st.checksum_file = job.get("checksum_file", "")
+    st.original_checksum_file = job.get("original_checksum_file") or st.checksum_file
     st.data_dir = job.get("data_dir", "")
     subs = job.get("submissions") or []
     st.submitted_by = subs[-1].get("submitted_by", "") if subs else job.get("prepared_by", "")
